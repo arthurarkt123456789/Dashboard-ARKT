@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 import { NextResponse } from 'next/server'
 import { isAuthenticated } from '@/lib/auth'
 import { fetchCustomerInvoices, fetchSupplierInvoices } from '@/lib/pennylane'
