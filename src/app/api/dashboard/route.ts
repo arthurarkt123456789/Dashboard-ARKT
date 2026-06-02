@@ -17,7 +17,7 @@ import {
   getPrevFiscalYear,
 } from '@/lib/calculations'
 import { format, addMonths } from 'date-fns'
-import { PipelineEntry } from '@/types'
+import { PipelineEntry, PLCustomerInvoice, PLSupplierInvoice } from '@/types'
 
 export async function GET() {
   if (!(await isAuthenticated())) {
@@ -27,25 +27,39 @@ export async function GET() {
   const now = new Date()
   const fy = getFiscalYear(now)
   const prev = getPrevFiscalYear(now)
-  // Include a couple extra months before prev FY for recurring detection
   const fetchFrom = format(addMonths(prev.start, -2), 'yyyy-MM-dd')
   const fetchTo = format(fy.end, 'yyyy-MM-dd')
 
-  const [currentInvoices, currentExpenses, prevInvoices, prevExpenses, settings, rawPipeline] =
-    await Promise.all([
-      fetchCustomerInvoices(format(fy.start, 'yyyy-MM-dd'), fetchTo),
-      fetchSupplierInvoices(format(fy.start, 'yyyy-MM-dd'), fetchTo),
-      fetchCustomerInvoices(format(prev.start, 'yyyy-MM-dd'), format(prev.end, 'yyyy-MM-dd')),
-      fetchSupplierInvoices(format(prev.start, 'yyyy-MM-dd'), format(prev.end, 'yyyy-MM-dd')),
-      getSettings(),
-      prisma.pipelineEntry.findMany({ orderBy: { expectedDate: 'asc' } }),
-    ])
+  const hasPennylane = !!process.env.PENNYLANE_API_KEY
 
-  // Detect duplicates in pipeline
-  const recentInvoices = currentInvoices.filter((inv) => {
-    const d = new Date(inv.issue_date)
-    return d >= addMonths(now, -3)
-  })
+  // Fetch data — fall back to empty arrays if Pennylane key not configured
+  let currentInvoices: PLCustomerInvoice[] = []
+  let currentExpenses: PLSupplierInvoice[] = []
+  let prevInvoices: PLCustomerInvoice[] = []
+  let prevExpenses: PLSupplierInvoice[] = []
+  let pennylaneError: string | null = null
+
+  if (hasPennylane) {
+    try {
+      ;[currentInvoices, currentExpenses, prevInvoices, prevExpenses] = await Promise.all([
+        fetchCustomerInvoices(format(fy.start, 'yyyy-MM-dd'), fetchTo),
+        fetchSupplierInvoices(format(fy.start, 'yyyy-MM-dd'), fetchTo),
+        fetchCustomerInvoices(format(prev.start, 'yyyy-MM-dd'), format(prev.end, 'yyyy-MM-dd')),
+        fetchSupplierInvoices(format(prev.start, 'yyyy-MM-dd'), format(prev.end, 'yyyy-MM-dd')),
+      ])
+    } catch (e) {
+      pennylaneError = e instanceof Error ? e.message : 'Erreur Pennylane'
+    }
+  } else {
+    pennylaneError = 'Clé API Pennylane non configurée — ajoutez PENNYLANE_API_KEY dans les variables Railway.'
+  }
+
+  const [settings, rawPipeline] = await Promise.all([
+    getSettings(),
+    prisma.pipelineEntry.findMany({ orderBy: { expectedDate: 'asc' } }),
+  ])
+
+  const recentInvoices = currentInvoices.filter((inv) => new Date(inv.issue_date) >= addMonths(now, -3))
   const dupIds = detectDuplicates(
     rawPipeline.map((p) => ({
       id: p.id,
@@ -76,12 +90,10 @@ export async function GET() {
   const cashFlow = computeCashFlow(currentInvoices, currentExpenses, pipeline, settings, now)
   const health = computeHealthStatus(fiscal, runRate, cashFlow)
 
-  // Unpaid invoices sorted by deadline
   const unpaidInvoices = currentInvoices
     .filter((inv) => !inv.is_paid && inv.outstanding_balance > 0)
     .sort((a, b) => (a.deadline ?? '').localeCompare(b.deadline ?? ''))
 
-  // Compute proper prevYearTotal for run-rate
   const prevYearTotal = prevInvoices.reduce((s, inv) => s + inv.amount_eur_excl_taxes, 0)
   runRate.prevYearTotal = prevYearTotal
   runRate.variance = runRate.total - prevYearTotal
@@ -97,5 +109,6 @@ export async function GET() {
     unpaidInvoices,
     pipeline,
     settings,
+    pennylaneError,
   })
 }

@@ -49,6 +49,7 @@ export default function DashboardPage() {
       const json = await res.json()
       setData(json)
       setLastUpdate(new Date())
+      if (json.pennylaneError) setError(json.pennylaneError)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erreur de chargement')
     } finally {
@@ -85,7 +86,12 @@ export default function DashboardPage() {
       </div>
 
       {loading && !data && <Spinner />}
-      {error && <ErrorState message={error} onRetry={load} />}
+      {error && !data && <ErrorState message={error} onRetry={load} />}
+      {error && data && (
+        <div style={{ background: 'var(--orange-dim)', border: '1px solid var(--orange)', borderRadius: 8, padding: '12px 16px', marginBottom: 16, color: 'var(--orange)', fontSize: '0.85rem' }}>
+          ⚠ {error}
+        </div>
+      )}
 
       {data && (
         <>
