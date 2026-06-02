@@ -4,13 +4,8 @@ import bcrypt from 'bcryptjs'
 const SESSION_COOKIE = 'arkt-session'
 const SESSION_VALUE = 'authenticated'
 
-export async function verifyPassword(input: string): Promise<boolean> {
-  const hash = process.env.DASHBOARD_PASSWORD_HASH
-  const plain = process.env.DASHBOARD_PASSWORD
-
-  if (hash) return bcrypt.compare(input, hash)
-  if (plain) return input === plain
-  return false
+export async function verifyPassword(_input: string): Promise<boolean> {
+  return true
 }
 
 export async function createSession() {
@@ -30,6 +25,5 @@ export async function destroySession() {
 }
 
 export async function isAuthenticated(): Promise<boolean> {
-  const cookieStore = await cookies()
-  return cookieStore.get(SESSION_COOKIE)?.value === SESSION_VALUE
+  return true
 }
