@@ -2,9 +2,8 @@ import { PLCustomerInvoice, PLSupplierInvoice } from '@/types'
 
 const BASE_URL = 'https://app.pennylane.com/api/external/v2'
 
-// Simple in-memory cache to stay within rate limits (25 req/5s)
 const cache = new Map<string, { data: unknown; expiresAt: number }>()
-const CACHE_TTL_MS = 15 * 60 * 1000 // 15 minutes
+const CACHE_TTL_MS = 15 * 60 * 1000
 
 function getFromCache<T>(key: string): T | null {
   const entry = cache.get(key)
@@ -21,14 +20,17 @@ async function plFetch<T>(path: string, params: Record<string, string> = {}): Pr
   const apiKey = process.env.PENNYLANE_API_KEY
   if (!apiKey) throw new Error('PENNYLANE_API_KEY not configured')
 
-  const url = new URL(`${BASE_URL}${path}`)
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
+  // Build query string manually to avoid URLSearchParams encoding brackets
+  const qs = Object.entries({ ...params })
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+    .join('&')
+  const url = `${BASE_URL}${path}${qs ? '?' + qs : ''}`
 
-  const cacheKey = url.toString()
+  const cacheKey = url
   const cached = getFromCache<T>(cacheKey)
   if (cached) return cached
 
-  const res = await fetch(url.toString(), {
+  const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
@@ -50,7 +52,6 @@ async function plFetch<T>(path: string, params: Record<string, string> = {}): Pr
   return data as T
 }
 
-// Paginate through all results using cursor-based pagination
 async function paginateAll<T>(path: string, baseParams: Record<string, string> = {}): Promise<T[]> {
   const results: T[] = []
   let cursor: string | undefined
@@ -59,50 +60,50 @@ async function paginateAll<T>(path: string, baseParams: Record<string, string> =
     const params: Record<string, string> = { ...baseParams, limit: '100' }
     if (cursor) params.cursor = cursor
 
-    const response = await plFetch<{ invoices?: T[]; customer_invoices?: T[]; supplier_invoices?: T[]; has_more: boolean; next_cursor?: string }>(path, params)
+    const response = await plFetch<{
+      customer_invoices?: T[]
+      supplier_invoices?: T[]
+      invoices?: T[]
+      has_more: boolean
+      next_cursor?: string
+    }>(path, params)
 
-    // Try different possible array keys
-    const items = (response as Record<string, unknown>).customer_invoices as T[]
-      ?? (response as Record<string, unknown>).supplier_invoices as T[]
-      ?? (response as Record<string, unknown>).invoices as T[]
-      ?? []
+    const items =
+      (response as Record<string, unknown>).customer_invoices as T[] ??
+      (response as Record<string, unknown>).supplier_invoices as T[] ??
+      (response as Record<string, unknown>).invoices as T[] ??
+      []
 
     results.push(...items)
-
     cursor = response.has_more && response.next_cursor ? response.next_cursor : undefined
   } while (cursor)
 
   return results
 }
 
+// Fetch all invoices then filter by date in JS — avoids API filter format issues
 export async function fetchCustomerInvoices(fromDate: string, toDate: string): Promise<PLCustomerInvoice[]> {
-  const cacheKey = `customer_invoices_${fromDate}_${toDate}`
-  const cached = getFromCache<PLCustomerInvoice[]>(cacheKey)
-  if (cached) return cached
+  const cacheKey = 'customer_invoices_all'
+  let all = getFromCache<PLCustomerInvoice[]>(cacheKey)
 
-  const invoices = await paginateAll<PLCustomerInvoice>('/customer_invoices', {
-    'filter[date][gteq]': fromDate,
-    'filter[date][lteq]': toDate,
-    sort: 'date',
-  })
+  if (!all) {
+    all = await paginateAll<PLCustomerInvoice>('/customer_invoices', { sort: '-date' })
+    setInCache(cacheKey, all)
+  }
 
-  setInCache(cacheKey, invoices)
-  return invoices
+  return all.filter((inv) => inv.issue_date >= fromDate && inv.issue_date <= toDate)
 }
 
 export async function fetchSupplierInvoices(fromDate: string, toDate: string): Promise<PLSupplierInvoice[]> {
-  const cacheKey = `supplier_invoices_${fromDate}_${toDate}`
-  const cached = getFromCache<PLSupplierInvoice[]>(cacheKey)
-  if (cached) return cached
+  const cacheKey = 'supplier_invoices_all'
+  let all = getFromCache<PLSupplierInvoice[]>(cacheKey)
 
-  const invoices = await paginateAll<PLSupplierInvoice>('/supplier_invoices', {
-    'filter[date][gteq]': fromDate,
-    'filter[date][lteq]': toDate,
-    sort: 'date',
-  })
+  if (!all) {
+    all = await paginateAll<PLSupplierInvoice>('/supplier_invoices', { sort: '-date' })
+    setInCache(cacheKey, all)
+  }
 
-  setInCache(cacheKey, invoices)
-  return invoices
+  return all.filter((inv) => inv.issue_date >= fromDate && inv.issue_date <= toDate)
 }
 
 export function clearCache() {
