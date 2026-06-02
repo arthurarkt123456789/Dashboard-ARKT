@@ -3,6 +3,6 @@ builder = "nixpacks"
 
 [deploy]
 startCommand = "npx prisma migrate deploy && node .next/standalone/server.js"
-healthcheckPath = "/api/auth/login"
+healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
