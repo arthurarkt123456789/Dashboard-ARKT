@@ -17,7 +17,7 @@ import {
   getPrevFiscalYear,
 } from '@/lib/calculations'
 import { format, addMonths } from 'date-fns'
-import { PipelineEntry, PLCustomerInvoice, PLSupplierInvoice } from '@/types'
+import { PipelineEntry, PLCustomerInvoice, PLSupplierInvoice, DEFAULT_SETTINGS } from '@/types'
 
 export async function GET() {
   if (!(await isAuthenticated())) {
@@ -55,8 +55,8 @@ export async function GET() {
   }
 
   const [settings, rawPipeline] = await Promise.all([
-    getSettings(),
-    prisma.pipelineEntry.findMany({ orderBy: { expectedDate: 'asc' } }),
+    getSettings().catch(() => DEFAULT_SETTINGS),
+    prisma.pipelineEntry.findMany({ orderBy: { expectedDate: 'asc' } }).catch(() => []),
   ])
 
   const recentInvoices = currentInvoices.filter((inv) => new Date(inv.issue_date) >= addMonths(now, -3))
