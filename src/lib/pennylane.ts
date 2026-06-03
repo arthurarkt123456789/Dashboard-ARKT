@@ -1,4 +1,4 @@
-import { PLCustomerInvoice, PLSupplierInvoice } from '@/types'
+import { PLCustomerInvoice, PLSupplierInvoice, extractClientName } from '@/types'
 import { prisma } from './prisma'
 
 const BASE_URL = 'https://app.pennylane.com/api/external/v2'
@@ -103,27 +103,28 @@ export async function fetchLedgerEntries(
   const CONCURRENCY = 8
   const result = new Map<number, string | null>()
 
-  // Filter to accountable invoices only
-  const accountable = invoices.filter(
-    (inv) => inv.accounting_status === 'complete' || inv.accounting_status === 'entry'
-  )
+  // All invoices (we'll try to get codes for all, fall back gracefully)
+  const allIds = invoices.map((inv) => BigInt(inv.id))
 
-  // 1. Load all cached account codes from DB in one query
+  // 1. Load all cached account codes from DB
   const cachedRows = await prisma.ledgerEntryCache.findMany({
-    where: { invoiceId: { in: accountable.map((inv) => BigInt(inv.id)) } },
+    where: { invoiceId: { in: allIds } },
   }).catch(() => [])
 
   const dbCache = new Map<number, string | null>()
   for (const row of cachedRows) dbCache.set(Number(row.invoiceId), row.accountCode)
 
   // 2. Populate result from DB cache
-  for (const inv of accountable) {
+  for (const inv of invoices) {
     if (dbCache.has(inv.id)) result.set(inv.id, dbCache.get(inv.id)!)
   }
 
-  // 3. Fetch from API only what's not in DB cache (also check in-memory cache)
-  const toFetch = accountable.filter(
-    (inv) => !dbCache.has(inv.id) && getFromCache(`ledger_${inv.id}`) === null
+  // 3. Fetch from API for complete/entry invoices not yet in DB cache
+  const toFetch = invoices.filter(
+    (inv) =>
+      !dbCache.has(inv.id) &&
+      (inv.accounting_status === 'complete' || inv.accounting_status === 'entry') &&
+      getFromCache(`ledger_${inv.id}`) === null
   )
 
   if (toFetch.length > 0) {
@@ -144,7 +145,6 @@ export async function fetchLedgerEntries(
       }
     }
 
-    // 4. Persist new results to DB (upsert to handle retries)
     if (newEntries.length > 0) {
       await Promise.allSettled(
         newEntries.map((e) =>
@@ -158,11 +158,54 @@ export async function fetchLedgerEntries(
     }
   }
 
-  // 5. Add in-memory cached entries (not in DB yet)
-  for (const inv of accountable) {
+  // 4. Add in-memory cached entries
+  for (const inv of invoices) {
     if (!result.has(inv.id)) {
       const cached = getFromCache<PLLedgerEntry>(`ledger_${inv.id}`)
       if (cached) result.set(inv.id, extractAccountCode(cached.ledger_entry_lines))
+    }
+  }
+
+  // 5. SUPPLIER REPUTATION FALLBACK: for uncategorized invoices, inherit the most common
+  //    account code seen for the same supplier name in the DB cache.
+  //    This handles validation_needed invoices from known suppliers (e.g. BTR Renovation always = 604).
+  const uncategorized = invoices.filter((inv) => !result.has(inv.id) || result.get(inv.id) === null)
+  if (uncategorized.length > 0) {
+    // Build supplier → most common code map from ALL cached entries for ALL invoices
+    const allCached = await prisma.ledgerEntryCache.findMany({
+      where: { accountCode: { not: null } },
+      select: { invoiceId: true, accountCode: true },
+    }).catch(() => [])
+
+    // We need to match invoices to suppliers. Build invoiceId → supplierName from our invoices array
+    const supplierByInvoiceId = new Map<number, string>()
+    for (const inv of invoices) {
+      supplierByInvoiceId.set(inv.id, extractClientName(inv.label))
+    }
+
+    // Build supplier → [codes] map using ONLY invoices we know about
+    const supplierCodes = new Map<string, Map<string, number>>()
+    for (const row of allCached) {
+      const invId = Number(row.invoiceId)
+      const supplierName = supplierByInvoiceId.get(invId)
+      if (!supplierName || !row.accountCode) continue
+      if (!supplierCodes.has(supplierName)) supplierCodes.set(supplierName, new Map())
+      const codes = supplierCodes.get(supplierName)!
+      codes.set(row.accountCode, (codes.get(row.accountCode) ?? 0) + 1)
+    }
+
+    // For each uncategorized invoice, use supplier's most common code
+    for (const inv of uncategorized) {
+      const supplierName = extractClientName(inv.label)
+      const codes = supplierCodes.get(supplierName)
+      if (!codes || codes.size === 0) continue
+      // Pick the code with highest frequency
+      let bestCode = ''
+      let bestCount = 0
+      for (const [code, count] of Array.from(codes.entries())) {
+        if (count > bestCount) { bestCode = code; bestCount = count }
+      }
+      if (bestCode) result.set(inv.id, bestCode)
     }
   }
 
