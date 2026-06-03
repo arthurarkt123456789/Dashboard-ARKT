@@ -1,9 +1,9 @@
 'use client'
 
-import { MonthlyRevenue, FiscalYearSummary, RunRateProjection } from '@/types'
+import { FiscalYearSummary, RunRateProjection } from '@/types'
 
 const fmt = (n: number) =>
-  n >= 1000 ? `${(n / 1000).toFixed(1)}k€` : `${n.toFixed(0)}€`
+  n >= 1000 ? `${(n / 1000).toFixed(1)}k€` : `${Math.round(n)}€`
 
 const fmtPct = (n: number) => (n >= 0 ? `+${n.toFixed(1)}%` : `${n.toFixed(1)}%`)
 
@@ -16,28 +16,26 @@ function TrendArrow({ pct }: { pct: number }) {
   )
 }
 
-interface KPIBlockProps {
+function KPIBlock({ label, value, sub, trend, highlight }: {
   label: string
   value: string
   sub: string
   trend?: number
-  accent?: string
-}
-
-function KPIBlock({ label, value, sub, trend }: KPIBlockProps) {
+  highlight?: boolean
+}) {
   return (
     <div style={{
       flex: 1,
-      background: 'var(--bg-card)',
-      border: '1px solid var(--border)',
+      background: highlight ? 'var(--accent-dim)' : 'var(--bg-card)',
+      border: `1px solid ${highlight ? 'var(--accent)' : 'var(--border)'}`,
       borderRadius: 10,
       padding: '16px 20px',
       minWidth: 0,
     }}>
-      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
         {label}
       </div>
-      <div style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
+      <div style={{ fontSize: '1.55rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.2 }}>
         {value}
       </div>
       <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: 4 }}>
@@ -49,58 +47,63 @@ function KPIBlock({ label, value, sub, trend }: KPIBlockProps) {
 }
 
 export default function KPIStrip({
-  monthly,
   fiscal,
   runRate,
 }: {
-  monthly: MonthlyRevenue[]
   fiscal: FiscalYearSummary
   runRate: RunRateProjection
 }) {
-  // CA Facturé YTD vs prev year same period
-  const theoreticalGrowth = fiscal.prevYearRevenue > 0
-    ? ((fiscal.theoreticalRevenue - fiscal.prevYearRevenue) / fiscal.prevYearRevenue) * 100
-    : 0
+  const nowYM = new Date().toISOString().slice(0, 7)
 
-  // CA Encaissé YTD vs prev year same period
-  const revenueGrowth = fiscal.revenueGrowthPct
+  // N-1 YTD values (from fiscal summary)
+  const prevYtdRevenue = fiscal.prevYearRevenue  // already YTD-filtered in computeFiscalSummary
+  const prevYtdMargin = fiscal.prevYearGrossMargin
 
-  // Marge Brute Théorique YTD vs prev year
-  const prevMargin = fiscal.prevYearGrossMargin
-  const marginGrowth = prevMargin > 0
-    ? ((fiscal.theoreticalGrossMargin - prevMargin) / prevMargin) * 100
-    : 0
+  // Trends
+  const caFactureTrend = prevYtdRevenue > 0 ? ((fiscal.theoreticalRevenue - prevYtdRevenue) / prevYtdRevenue) * 100 : 0
+  const caEncaisseTrend = prevYtdRevenue > 0 ? ((fiscal.totalRevenue - prevYtdRevenue) / prevYtdRevenue) * 100 : 0
+  const runRateTrend = fiscal.prevFullRevenue > 0 ? ((runRate.total - fiscal.prevFullRevenue) / fiscal.prevFullRevenue) * 100 : 0
+  const margeTrend = prevYtdMargin > 0 ? ((fiscal.theoreticalGrossMargin - prevYtdMargin) / prevYtdMargin) * 100 : 0
 
-  // RunRate vs Last Year Full
-  const runRateGrowth = fiscal.prevFullRevenue > 0
-    ? ((runRate.total - fiscal.prevFullRevenue) / fiscal.prevFullRevenue) * 100
-    : 0
+  // Marge brute runrate = gross margin rate × projected full-year revenue
+  const marginRate = fiscal.theoreticalRevenue > 0 ? fiscal.theoreticalGrossMargin / fiscal.theoreticalRevenue : 0
+  const margeRunrate = marginRate * runRate.total
+  const prevFullMargin = fiscal.prevFullGrossMargin
+  const margeRunrateTrend = prevFullMargin > 0 ? ((margeRunrate - prevFullMargin) / prevFullMargin) * 100 : 0
 
   return (
-    <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
       <KPIBlock
         label="CA Facturé YTD"
         value={fmt(fiscal.theoreticalRevenue)}
-        sub={`vs ${fmt(fiscal.prevYearRevenue)} N-1`}
-        trend={theoreticalGrowth}
+        sub={`vs ${fmt(prevYtdRevenue)} N-1 YTD`}
+        trend={caFactureTrend}
       />
       <KPIBlock
         label="CA Encaissé YTD"
         value={fmt(fiscal.totalRevenue)}
-        sub={`vs ${fmt(fiscal.prevYearRevenue)} N-1`}
-        trend={revenueGrowth}
+        sub={`vs ${fmt(prevYtdRevenue)} N-1 YTD`}
+        trend={caEncaisseTrend}
+      />
+      <KPIBlock
+        label="CA Run-Rate"
+        value={fmt(runRate.total)}
+        sub={`vs ${fmt(fiscal.prevFullRevenue)} exercice N-1 complet`}
+        trend={runRateTrend}
+        highlight
       />
       <KPIBlock
         label="Marge Brute Théo. YTD"
         value={fmt(fiscal.theoreticalGrossMargin)}
-        sub={`${fiscal.theoreticalGrossMarginPct.toFixed(1)}% — vs ${fmt(prevMargin)} N-1`}
-        trend={marginGrowth}
+        sub={`${fiscal.theoreticalGrossMarginPct.toFixed(1)}% — vs ${fmt(prevYtdMargin)} N-1`}
+        trend={margeTrend}
       />
       <KPIBlock
-        label="Run-Rate vs N-1 Exercice"
-        value={fmt(runRate.total)}
-        sub={`vs ${fmt(fiscal.prevFullRevenue)} exercice N-1 complet`}
-        trend={runRateGrowth}
+        label="Marge Brute Run-Rate"
+        value={fmt(margeRunrate)}
+        sub={`${(marginRate * 100).toFixed(1)}% × run-rate — vs ${fmt(prevFullMargin)} N-1`}
+        trend={margeRunrateTrend}
+        highlight
       />
     </div>
   )

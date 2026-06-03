@@ -116,7 +116,7 @@ export default function DashboardPage() {
           <HealthBar health={data.health} />
 
           {/* 1. KPI Strip */}
-          <KPIStrip monthly={data.monthly} fiscal={data.fiscal} runRate={data.runRate} />
+          <KPIStrip fiscal={data.fiscal} runRate={data.runRate} />
 
           {/* 2. Margin/Revenue Chart */}
           <RevenueChart monthly={data.monthly} fiscal={data.fiscal} />

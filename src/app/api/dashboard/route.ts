@@ -113,24 +113,12 @@ export async function GET() {
     }
   }
 
-  const monthly = computeMonthlyRevenue(
-    currentInvoices, prevInvoices, currentExpenses, prevExpenses,
-    settings, now, currentCategoryMap, prevCategoryMap
-  )
-
-  const invoicedUnpaid = currentInvoices
-    .filter((inv) => !inv.paid && parseFloat(inv.remaining_amount_without_tax) > 0)
-    .reduce((s, inv) => s + (parseFloat(inv.remaining_amount_without_tax) || 0), 0)
-
-  const fiscal = computeFiscalSummary(monthly, now, invoicedUnpaid, prevInvoices, prevExpenses, settings, prevCategoryMap)
-  const runRate = computeRunRate(currentInvoices, pipeline, settings, now)
-
-  // Fetch payroll from ledger entries (OD journal) — current FY and prev FY
   const fyStart = format(getFiscalYear(now).start, 'yyyy-MM-dd')
   const fyNow = format(now, 'yyyy-MM-dd')
   const prevFyStart = format(prev.start, 'yyyy-MM-dd')
   const prevFyEnd = format(prev.end, 'yyyy-MM-dd')
 
+  // Fetch payroll BEFORE computing monthly (payroll needed for correct monthly breakdown)
   const [payrollLedger, prevPayrollLedger] = await Promise.all([
     Promise.race([
       fetchPayrollFromLedger(fyStart, fyNow),
@@ -145,6 +133,19 @@ export async function GET() {
       ),
     ]).catch(() => ({ monthly: new Map<string, number>(), total: 0 })),
   ])
+
+  const monthly = computeMonthlyRevenue(
+    currentInvoices, prevInvoices, currentExpenses, prevExpenses,
+    settings, now, currentCategoryMap, prevCategoryMap,
+    payrollLedger.monthly, prevPayrollLedger.monthly
+  )
+
+  const invoicedUnpaid = currentInvoices
+    .filter((inv) => !inv.paid && parseFloat(inv.remaining_amount_without_tax) > 0)
+    .reduce((s, inv) => s + (parseFloat(inv.remaining_amount_without_tax) || 0), 0)
+
+  const fiscal = computeFiscalSummary(monthly, now, invoicedUnpaid, prevInvoices, prevExpenses, settings, prevCategoryMap)
+  const runRate = computeRunRate(currentInvoices, pipeline, settings, now)
 
   const expenses = computeExpenseSummary(currentExpenses, settings, now, currentCategoryMap, payrollLedger)
   const cashFlow = computeCashFlow(currentInvoices, currentExpenses, pipeline, settings, now, currentCategoryMap)
@@ -183,8 +184,9 @@ export async function GET() {
 
   // Prev year full expenses
   const classifyPrev = (e: PLSupplierInvoice) => classifyExpense(extractClientName(e.label), prevCategoryMap.get(e.id), settings)
+  const prevPayrollFromInvoices = prevExpenses.filter((e) => classifyPrev(e) === 'payroll').reduce((s, e) => s + ht(e), 0)
   const prevYearFullExpenses = {
-    totalPayroll: prevPayroll,
+    totalPayroll: prevPayroll + prevPayrollFromInvoices,  // OD journal + supplier invoices (mutuelle etc.)
     totalDirectCosts: prevExpenses.filter((e) => classifyPrev(e) === 'cogs').reduce((s, e) => s + ht(e), 0),
     totalExternalCosts: prevExpenses.filter((e) => classifyPrev(e) === 'external').reduce((s, e) => s + ht(e), 0),
     totalDirectorCharges: prevExpenses.filter((e) => classifyPrev(e) === 'director').reduce((s, e) => s + ht(e), 0),

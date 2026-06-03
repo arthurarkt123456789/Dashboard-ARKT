@@ -214,32 +214,36 @@ export default function PLSection({
     resultTheoPct: theoreticalEbitdaPct,
   }
 
-  // N-1 YTD column — sum from monthly data (same number of elapsed months as current YTD)
-  const prevGmEnc = fiscal.prevYearGrossMargin
-  const prevYtdPayroll = monthly.reduce((s, m) => s + m.prevYearPayroll, 0)
-  const prevYtdExternal = monthly.reduce((s, m) => s + m.prevYearExternalCosts, 0)
-  const prevYtdDirector = monthly.reduce((s, m) => s + m.prevYearDirectorCharges, 0)
-  const prevYtdMeulery = monthly.reduce((s, m) => s + m.prevYearMeuleryCharges, 0)
+  // N-1 YTD column — only elapsed months (same period as current YTD)
+  const nowYM = new Date().toISOString().slice(0, 7)
+  const ytdMonthly = monthly.filter((m) => m.month <= nowYM)
+  const prevGmEnc = ytdMonthly.reduce((s, m) => s + m.prevYearGrossMargin, 0)
+  const prevYtdPayroll = ytdMonthly.reduce((s, m) => s + m.prevYearPayroll, 0)
+  const prevYtdExternal = ytdMonthly.reduce((s, m) => s + m.prevYearExternalCosts, 0)
+  const prevYtdDirector = ytdMonthly.reduce((s, m) => s + m.prevYearDirectorCharges, 0)
+  const prevYtdMeulery = ytdMonthly.reduce((s, m) => s + m.prevYearMeuleryCharges, 0)
+  const prevYtdRevenue = ytdMonthly.reduce((s, m) => s + m.prevYearRevenue, 0)
+  const prevYtdDirectCosts = ytdMonthly.reduce((s, m) => s + (m.prevYearRevenue - m.prevYearGrossMargin), 0)
   const prevYtdResult = prevGmEnc - prevYtdPayroll - prevYtdExternal - prevYtdDirector - prevYtdMeulery
 
   const n1Ytd: Col = {
     label: `N-1 YTD`,
-    revenue: fiscal.prevYearRevenue,
+    revenue: prevYtdRevenue,
     unpaid: 0,
-    theoreticalRevenue: fiscal.prevYearRevenue,
-    directCosts: fiscal.prevYearRevenue - prevGmEnc,
+    theoreticalRevenue: prevYtdRevenue,
+    directCosts: prevYtdDirectCosts,
     grossMarginEnc: prevGmEnc,
     grossMarginTheo: prevGmEnc,
-    grossMarginEncPct: fiscal.prevYearRevenue > 0 ? (prevGmEnc / fiscal.prevYearRevenue) * 100 : 0,
-    grossMarginTheoPct: fiscal.prevYearRevenue > 0 ? (prevGmEnc / fiscal.prevYearRevenue) * 100 : 0,
+    grossMarginEncPct: prevYtdRevenue > 0 ? (prevGmEnc / prevYtdRevenue) * 100 : 0,
+    grossMarginTheoPct: prevYtdRevenue > 0 ? (prevGmEnc / prevYtdRevenue) * 100 : 0,
     payroll: prevYtdPayroll,
     directorCharges: prevYtdDirector,
     meuleryCharges: prevYtdMeulery,
     externalCosts: prevYtdExternal,
     resultEnc: prevYtdResult,
     resultTheo: prevYtdResult,
-    resultEncPct: fiscal.prevYearRevenue > 0 ? (prevYtdResult / fiscal.prevYearRevenue) * 100 : 0,
-    resultTheoPct: fiscal.prevYearRevenue > 0 ? (prevYtdResult / fiscal.prevYearRevenue) * 100 : 0,
+    resultEncPct: prevYtdRevenue > 0 ? (prevYtdResult / prevYtdRevenue) * 100 : 0,
+    resultTheoPct: prevYtdRevenue > 0 ? (prevYtdResult / prevYtdRevenue) * 100 : 0,
   }
 
   // N-1 Exercice complet column

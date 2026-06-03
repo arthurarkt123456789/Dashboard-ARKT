@@ -113,7 +113,9 @@ export function computeMonthlyRevenue(
   settings: AppSettings,
   now: Date,
   categoryMap: Map<number, string | null> = new Map(),
-  prevCategoryMap: Map<number, string | null> = new Map()
+  prevCategoryMap: Map<number, string | null> = new Map(),
+  payrollLedger: Map<string, number> = new Map(),     // current year OD payroll by YYYY-MM
+  prevPayrollLedger: Map<string, number> = new Map()  // prev year OD payroll by YYYY-MM
 ): MonthlyRevenue[] {
   const fy = getFiscalYear(now)
   const months: MonthlyRevenue[] = []
@@ -134,6 +136,7 @@ export function computeMonthlyRevenue(
 
     const directCosts = monthExp.filter((e) => classify(e) === 'cogs').reduce((s, e) => s + amountHT(e), 0)
     const payroll = monthExp.filter((e) => classify(e) === 'payroll').reduce((s, e) => s + amountHT(e), 0)
+      + (payrollLedger.get(monthKey) ?? 0)  // add OD journal payroll
     const externalCosts = monthExp.filter((e) => classify(e) === 'external').reduce((s, e) => s + amountHT(e), 0)
     const directorCharges = monthExp.filter((e) => classify(e) === 'director').reduce((s, e) => s + amountHT(e), 0)
     const meuleryCharges = monthExp.filter((e) => classify(e) === 'meulery').reduce((s, e) => s + amountHT(e), 0)
@@ -156,6 +159,7 @@ export function computeMonthlyRevenue(
     const prevDirectCosts = prevMonthExp.filter((e) => classifyPrev(e) === 'cogs').reduce((s, e) => s + amountHT(e), 0)
     const prevGrossMargin = prevRevenue - prevDirectCosts
     const prevYearPayroll = prevMonthExp.filter((e) => classifyPrev(e) === 'payroll').reduce((s, e) => s + amountHT(e), 0)
+      + (prevPayrollLedger.get(prevMonthKey) ?? 0)  // add prev year OD journal payroll
     const prevYearExternalCosts = prevMonthExp.filter((e) => classifyPrev(e) === 'external').reduce((s, e) => s + amountHT(e), 0)
     const prevYearDirectorCharges = prevMonthExp.filter((e) => classifyPrev(e) === 'director').reduce((s, e) => s + amountHT(e), 0)
     const prevYearMeuleryCharges = prevMonthExp.filter((e) => classifyPrev(e) === 'meulery').reduce((s, e) => s + amountHT(e), 0)
