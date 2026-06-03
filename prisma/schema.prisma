@@ -24,3 +24,13 @@ model Setting {
   value     String
   updatedAt DateTime @updatedAt
 }
+
+model PipelineMonthEntry {
+  id         Int      @id @default(autoincrement())
+  clientName String
+  month      String   // YYYY-MM
+  amount     Float    @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  @@unique([clientName, month])
+}

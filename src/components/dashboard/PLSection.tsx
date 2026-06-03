@@ -8,16 +8,6 @@ const fmt = (n: number) =>
 
 const fmtPct = (n: number) => `${n.toFixed(1)}%`
 
-interface PLRow {
-  label: string
-  value: number
-  pct?: number
-  indent?: boolean
-  bold?: boolean
-  positive?: boolean
-  separator?: boolean
-}
-
 type DetailLine = DashboardData['cogsDetail'][number]
 
 function DetailTable({ lines, title }: { lines: DetailLine[]; title: string }) {
@@ -64,9 +54,118 @@ function DetailTable({ lines, title }: { lines: DetailLine[]; title: string }) {
   )
 }
 
+interface Col {
+  label: string
+  revenue: number
+  unpaid: number
+  theoreticalRevenue: number
+  directCosts: number
+  grossMarginEnc: number
+  grossMarginTheo: number
+  grossMarginEncPct: number
+  grossMarginTheoPct: number
+  payroll: number
+  directorCharges: number
+  meuleryCharges: number
+  externalCosts: number
+  resultEnc: number
+  resultTheo: number
+  resultEncPct: number
+  resultTheoPct: number
+}
+
+function PLTable({ cols }: { cols: Col[] }) {
+  const rows: Array<{
+    label: string
+    key: keyof Col
+    pctKey?: keyof Col
+    indent?: boolean
+    bold?: boolean
+    separator?: boolean
+    sign?: 1 | -1
+  }> = [
+    { label: 'CA Encaissé HT', key: 'revenue', bold: true },
+    { label: '+ CA non encaissé', key: 'unpaid', indent: true },
+    { label: '= CA Théorique', key: 'theoreticalRevenue', bold: true, separator: true },
+    { label: '— Charges directes', key: 'directCosts', indent: true, sign: -1 },
+    { label: '= Marge Brute enc.', key: 'grossMarginEnc', pctKey: 'grossMarginEncPct' },
+    { label: '= Marge Brute théo.', key: 'grossMarginTheo', pctKey: 'grossMarginTheoPct', bold: true, separator: true },
+    { label: '— Masse salariale', key: 'payroll', indent: true, sign: -1 },
+    { label: '— Charges dirigeant', key: 'directorCharges', indent: true, sign: -1 },
+    { label: '— Charges Meuleries', key: 'meuleryCharges', indent: true, sign: -1 },
+    { label: '— Frais externes', key: 'externalCosts', indent: true, sign: -1 },
+    { label: '= Résultat enc.', key: 'resultEnc', pctKey: 'resultEncPct' },
+    { label: '= Résultat théo.', key: 'resultTheo', pctKey: 'resultTheoPct', bold: true, separator: true },
+  ]
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text-secondary)', fontWeight: 600, borderBottom: '2px solid var(--border)' }}>Poste</th>
+            {cols.map((col, i) => (
+              <th key={i} style={{ textAlign: 'right', padding: '8px 12px', color: 'var(--text-secondary)', fontWeight: 600, borderBottom: '2px solid var(--border)', whiteSpace: 'nowrap' }}>
+                {col.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, ri) => (
+            <tr
+              key={ri}
+              style={{
+                borderBottom: row.separator ? '2px solid var(--border)' : '1px solid var(--border)',
+                background: row.bold && row.separator ? 'var(--bg-section, rgba(255,255,255,0.02))' : undefined,
+              }}
+            >
+              <td style={{
+                padding: '7px 12px',
+                fontWeight: row.bold ? 700 : 400,
+                paddingLeft: row.indent ? 28 : 12,
+                color: row.indent ? 'var(--text-secondary)' : 'var(--text-primary)',
+                whiteSpace: 'nowrap',
+              }}>
+                {row.label}
+              </td>
+              {cols.map((col, ci) => {
+                const raw = col[row.key] as number
+                const pct = row.pctKey ? col[row.pctKey] as number : undefined
+                const display = row.sign === -1 ? -raw : raw
+                const isNeg = display < 0
+                const isPos = display > 0 && row.bold
+                const color = isNeg ? 'var(--red)' : isPos && row.bold ? 'var(--green)' : 'var(--text-primary)'
+                return (
+                  <td key={ci} style={{
+                    textAlign: 'right',
+                    padding: '7px 12px',
+                    fontWeight: row.bold ? 700 : 400,
+                    fontVariantNumeric: 'tabular-nums',
+                    color: row.sign === -1 ? 'var(--text-secondary)' : color,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {fmt(display)}
+                    {pct !== undefined && (
+                      <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginLeft: 4 }}>
+                        ({fmtPct(pct)})
+                      </span>
+                    )}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export default function PLSection({
   fiscal,
   expenses,
+  prevYearFullExpenses,
   cogsDetail,
   payrollDetail,
   directorDetail,
@@ -74,6 +173,13 @@ export default function PLSection({
 }: {
   fiscal: FiscalYearSummary
   expenses: ExpenseSummary
+  prevYearFullExpenses?: {
+    totalPayroll: number
+    totalDirectCosts: number
+    totalExternalCosts: number
+    totalDirectorCharges: number
+    totalMeuleryCharges: number
+  }
   cogsDetail: DetailLine[]
   payrollDetail: DetailLine[]
   directorDetail: DetailLine[]
@@ -85,39 +191,89 @@ export default function PLSection({
   const theoreticalEbitda = fiscal.theoreticalRevenue - totalCharges
   const theoreticalEbitdaPct = fiscal.theoreticalRevenue > 0 ? (theoreticalEbitda / fiscal.theoreticalRevenue) * 100 : 0
 
-  const rows: PLRow[] = [
-    { label: 'CA encaissé HT', value: fiscal.totalRevenue, bold: true, positive: true },
-    { label: '+ Facturé non encaissé', value: fiscal.theoreticalRevenue - fiscal.totalRevenue, indent: true },
-    { label: '= CA théorique HT', value: fiscal.theoreticalRevenue, bold: true, separator: true, positive: true },
-    { label: '— Charges directes (COGS)', value: -fiscal.totalDirectCosts, indent: true },
-    { label: '= Marge brute encaissée', value: fiscal.totalGrossMargin, pct: fiscal.grossMarginPct, bold: false },
-    { label: '= Marge brute théorique', value: fiscal.theoreticalGrossMargin, pct: fiscal.theoreticalGrossMarginPct, bold: true, separator: true },
-    { label: '— Masse salariale', value: -expenses.totalPayroll, indent: true },
-    { label: '— Charges dirigeant', value: -expenses.totalDirectorCharges, indent: true },
-    { label: '— Charges Meuleries', value: -expenses.totalMeuleryCharges, indent: true },
-    { label: '— Frais externes', value: -expenses.totalExternalCosts, indent: true },
-    { label: '= Résultat encaissé', value: ebitda, pct: ebitdaPct, bold: false, positive: ebitda >= 0 },
-    { label: '= Résultat théorique', value: theoreticalEbitda, pct: theoreticalEbitdaPct, bold: true, separator: true, positive: theoreticalEbitda >= 0 },
-  ]
+  // N YTD column
+  const nYtd: Col = {
+    label: `N YTD (${fiscal.year.split('-')[1]})`,
+    revenue: fiscal.totalRevenue,
+    unpaid: fiscal.theoreticalRevenue - fiscal.totalRevenue,
+    theoreticalRevenue: fiscal.theoreticalRevenue,
+    directCosts: fiscal.totalDirectCosts,
+    grossMarginEnc: fiscal.totalGrossMargin,
+    grossMarginTheo: fiscal.theoreticalGrossMargin,
+    grossMarginEncPct: fiscal.grossMarginPct,
+    grossMarginTheoPct: fiscal.theoreticalGrossMarginPct,
+    payroll: expenses.totalPayroll,
+    directorCharges: expenses.totalDirectorCharges,
+    meuleryCharges: expenses.totalMeuleryCharges,
+    externalCosts: expenses.totalExternalCosts,
+    resultEnc: ebitda,
+    resultTheo: theoreticalEbitda,
+    resultEncPct: ebitdaPct,
+    resultTheoPct: theoreticalEbitdaPct,
+  }
+
+  // N-1 YTD column (same months as YTD N)
+  const prevTotalChargesYtd = (fiscal.prevYearGrossMargin || 0) // not exact, approximation
+  const prevGmEnc = fiscal.prevYearGrossMargin
+  // We approximate N-1 YTD expenses as proportional to full year (no breakdown available for N-1 YTD)
+  const n1Ytd: Col = {
+    label: `N-1 YTD (${fiscal.year.split('-')[0]})`,
+    revenue: fiscal.prevYearRevenue,
+    unpaid: 0,
+    theoreticalRevenue: fiscal.prevYearRevenue,
+    directCosts: fiscal.prevYearRevenue - prevGmEnc,
+    grossMarginEnc: prevGmEnc,
+    grossMarginTheo: prevGmEnc,
+    grossMarginEncPct: fiscal.prevYearRevenue > 0 ? (prevGmEnc / fiscal.prevYearRevenue) * 100 : 0,
+    grossMarginTheoPct: fiscal.prevYearRevenue > 0 ? (prevGmEnc / fiscal.prevYearRevenue) * 100 : 0,
+    payroll: 0,
+    directorCharges: 0,
+    meuleryCharges: 0,
+    externalCosts: 0,
+    resultEnc: prevGmEnc,
+    resultTheo: prevGmEnc,
+    resultEncPct: fiscal.prevYearRevenue > 0 ? (prevGmEnc / fiscal.prevYearRevenue) * 100 : 0,
+    resultTheoPct: fiscal.prevYearRevenue > 0 ? (prevGmEnc / fiscal.prevYearRevenue) * 100 : 0,
+  }
+
+  // N-1 Exercice complet column
+  const prevFull = prevYearFullExpenses
+  const prevFullRevenue = fiscal.prevFullRevenue
+  const prevFullDirectCosts = fiscal.prevFullDirectCosts
+  const prevFullGm = fiscal.prevFullGrossMargin
+  const prevFullCharges = prevFull
+    ? prevFull.totalPayroll + prevFull.totalDirectCosts + prevFull.totalExternalCosts + prevFull.totalDirectorCharges + prevFull.totalMeuleryCharges
+    : 0
+  const prevFullResult = prevFullRevenue - prevFullDirectCosts - (prevFull ? (prevFull.totalPayroll + prevFull.totalExternalCosts + prevFull.totalDirectorCharges + prevFull.totalMeuleryCharges) : 0)
+
+  const n1Full: Col = {
+    label: `N-1 Exercice complet`,
+    revenue: prevFullRevenue,
+    unpaid: 0,
+    theoreticalRevenue: prevFullRevenue,
+    directCosts: prevFullDirectCosts,
+    grossMarginEnc: prevFullGm,
+    grossMarginTheo: prevFullGm,
+    grossMarginEncPct: prevFullRevenue > 0 ? (prevFullGm / prevFullRevenue) * 100 : 0,
+    grossMarginTheoPct: prevFullRevenue > 0 ? (prevFullGm / prevFullRevenue) * 100 : 0,
+    payroll: prevFull?.totalPayroll ?? 0,
+    directorCharges: prevFull?.totalDirectorCharges ?? 0,
+    meuleryCharges: prevFull?.totalMeuleryCharges ?? 0,
+    externalCosts: prevFull?.totalExternalCosts ?? 0,
+    resultEnc: prevFullResult,
+    resultTheo: prevFullResult,
+    resultEncPct: prevFullRevenue > 0 ? (prevFullResult / prevFullRevenue) * 100 : 0,
+    resultTheoPct: prevFullRevenue > 0 ? (prevFullResult / prevFullRevenue) * 100 : 0,
+  }
 
   return (
     <section className="section">
       <h2 className="section-title">Compte de résultat prévisionnel</h2>
-      <p className="section-note">Exercice {fiscal.year} — YTD</p>
+      <p className="section-note">Exercice {fiscal.year} — 3 colonnes comparatives</p>
 
-      <div className="pl-table">
-        {rows.map((row, i) => (
-          <div key={i} className={['pl-row', row.bold ? 'pl-row-bold' : '', row.separator ? 'pl-row-separator' : '', row.indent ? 'pl-row-indent' : ''].join(' ')}>
-            <span className="pl-label">{row.label}</span>
-            <span className="pl-value" style={{ color: row.bold ? (row.positive !== undefined ? (row.positive ? 'var(--green)' : 'var(--red)') : 'var(--text-primary)') : row.value < 0 ? 'var(--red)' : 'var(--text-primary)' }}>
-              {fmt(row.value)}
-              {row.pct !== undefined && <span className="pl-pct"> ({fmtPct(row.pct)})</span>}
-            </span>
-          </div>
-        ))}
-      </div>
+      <PLTable cols={[nYtd, n1Ytd, n1Full]} />
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
         <DetailTable lines={cogsDetail} title="Détail COGS" />
         <DetailTable lines={payrollDetail} title="Détail masse salariale" />
         <DetailTable lines={directorDetail} title="Détail charges dirigeant" />

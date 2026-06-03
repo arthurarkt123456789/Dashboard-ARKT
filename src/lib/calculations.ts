@@ -112,7 +112,8 @@ export function computeMonthlyRevenue(
   prevExpenses: PLSupplierInvoice[],
   settings: AppSettings,
   now: Date,
-  categoryMap: Map<number, string | null> = new Map()
+  categoryMap: Map<number, string | null> = new Map(),
+  prevCategoryMap: Map<number, string | null> = new Map()
 ): MonthlyRevenue[] {
   const fy = getFiscalYear(now)
   const months: MonthlyRevenue[] = []
@@ -128,12 +129,18 @@ export function computeMonthlyRevenue(
       .reduce((s, inv) => s + amountHT(inv), 0)
 
     const monthExp = currentExpenses.filter((e) => invDate(e).startsWith(monthKey))
-    const directCosts = monthExp
-      .filter((e) => classifyExpense(extractClientName(e.label), categoryMap.get(e.id), settings) === 'cogs')
-      .reduce((s, e) => s + amountHT(e), 0)
+    const classify = (e: PLSupplierInvoice) =>
+      classifyExpense(extractClientName(e.label), categoryMap.get(e.id), settings)
+
+    const directCosts = monthExp.filter((e) => classify(e) === 'cogs').reduce((s, e) => s + amountHT(e), 0)
+    const payroll = monthExp.filter((e) => classify(e) === 'payroll').reduce((s, e) => s + amountHT(e), 0)
+    const externalCosts = monthExp.filter((e) => classify(e) === 'external').reduce((s, e) => s + amountHT(e), 0)
+    const directorCharges = monthExp.filter((e) => classify(e) === 'director').reduce((s, e) => s + amountHT(e), 0)
+    const meuleryCharges = monthExp.filter((e) => classify(e) === 'meulery').reduce((s, e) => s + amountHT(e), 0)
 
     const grossMargin = revenue - directCosts
     const grossMarginPct = revenue > 0 ? (grossMargin / revenue) * 100 : 0
+    const ebe = grossMargin - payroll - externalCosts - directorCharges - meuleryCharges
 
     const prevMonthKey = formatMonth(addMonths(monthStart, -12))
     const prevInv = prevInvoices.filter((inv) => invDate(inv).startsWith(prevMonthKey))
@@ -141,10 +148,18 @@ export function computeMonthlyRevenue(
     const prevBartPucci = prevInv
       .filter((inv) => isBartPucci(clientName(inv), settings.bartPucciNames))
       .reduce((s, inv) => s + amountHT(inv), 0)
-    const prevDirectCosts = prevExpenses
-      .filter((e) => invDate(e).startsWith(prevMonthKey) && classifyExpense(extractClientName(e.label), categoryMap.get(e.id), settings) === 'cogs')
+
+    const prevMonthExp = prevExpenses.filter((e) => invDate(e).startsWith(prevMonthKey))
+    const classifyPrev = (e: PLSupplierInvoice) =>
+      classifyExpense(extractClientName(e.label), prevCategoryMap.get(e.id), settings)
+
+    const prevDirectCosts = prevMonthExp
+      .filter((e) => classifyPrev(e) === 'cogs')
       .reduce((s, e) => s + amountHT(e), 0)
     const prevGrossMargin = prevRevenue - prevDirectCosts
+    const prevYearPayroll = prevMonthExp
+      .filter((e) => classifyPrev(e) === 'payroll')
+      .reduce((s, e) => s + amountHT(e), 0)
 
     months.push({
       month: monthKey,
@@ -163,15 +178,38 @@ export function computeMonthlyRevenue(
       prevYearCumRevenue: 0,
       prevYearCumBartPucci: 0,
       prevYearCumGrossMargin: 0,
+      payroll,
+      externalCosts,
+      directorCharges,
+      meuleryCharges,
+      ebe,
+      cumPayroll: 0,
+      cumExternalCosts: 0,
+      cumDirectorCharges: 0,
+      cumMeuleryCharges: 0,
+      cumEbe: 0,
+      prevYearPayroll,
+      prevYearCumPayroll: 0,
     })
   }
 
-  let cumRev = 0, cumBP = 0, cumGM = 0, cumPrevRev = 0, cumPrevBP = 0, cumPrevGM = 0
+  let cumRev = 0, cumBP = 0, cumGM = 0
+  let cumPrevRev = 0, cumPrevBP = 0, cumPrevGM = 0
+  let cumPayroll = 0, cumExt = 0, cumDir = 0, cumMeul = 0, cumEbe = 0
+  let cumPrevPayroll = 0
+
   for (const m of months) {
     cumRev += m.revenue; cumBP += m.bartPucci; cumGM += m.grossMargin
     cumPrevRev += m.prevYearRevenue; cumPrevBP += m.prevYearBartPucci; cumPrevGM += m.prevYearGrossMargin
+    cumPayroll += m.payroll; cumExt += m.externalCosts
+    cumDir += m.directorCharges; cumMeul += m.meuleryCharges; cumEbe += m.ebe
+    cumPrevPayroll += m.prevYearPayroll
+
     m.cumRevenue = cumRev; m.cumBartPucci = cumBP; m.cumGrossMargin = cumGM
     m.prevYearCumRevenue = cumPrevRev; m.prevYearCumBartPucci = cumPrevBP; m.prevYearCumGrossMargin = cumPrevGM
+    m.cumPayroll = cumPayroll; m.cumExternalCosts = cumExt
+    m.cumDirectorCharges = cumDir; m.cumMeuleryCharges = cumMeul; m.cumEbe = cumEbe
+    m.prevYearCumPayroll = cumPrevPayroll
   }
 
   return months
@@ -182,7 +220,11 @@ export function computeMonthlyRevenue(
 export function computeFiscalSummary(
   monthly: MonthlyRevenue[],
   now: Date,
-  invoicedUnpaid: number = 0
+  invoicedUnpaid: number = 0,
+  prevInvoices: PLCustomerInvoice[] = [],
+  prevExpenses: PLSupplierInvoice[] = [],
+  settings: AppSettings | null = null,
+  prevCategoryMap: Map<number, string | null> = new Map()
 ): FiscalYearSummary {
   const fy = getFiscalYear(now)
   const ytd = monthly.filter((m) => m.month <= formatMonth(now))
@@ -197,6 +239,31 @@ export function computeFiscalSummary(
 
   const theoreticalRevenue = totalRevenue + invoicedUnpaid
   const theoreticalGrossMargin = theoreticalRevenue - totalDirectCosts
+
+  // Prev year full exercise (12 months)
+  let prevFullRevenue = 0
+  let prevFullBartPucci = 0
+  let prevFullDirectCosts = 0
+
+  if (prevInvoices.length > 0) {
+    prevFullRevenue = prevInvoices.reduce((s, inv) => s + amountHT(inv), 0)
+    const prevSettings = settings ?? ({ bartPucciNames: [] } as unknown as AppSettings)
+    prevFullBartPucci = prevInvoices
+      .filter((inv) => isBartPucci(clientName(inv), prevSettings.bartPucciNames))
+      .reduce((s, inv) => s + amountHT(inv), 0)
+
+    if (settings) {
+      prevFullDirectCosts = prevExpenses
+        .filter((e) => classifyExpense(extractClientName(e.label), prevCategoryMap.get(e.id), settings) === 'cogs')
+        .reduce((s, e) => s + amountHT(e), 0)
+    }
+  }
+
+  const prevFullGrossMargin = prevFullRevenue - prevFullDirectCosts
+  const prevFullGrossMarginPct = prevFullRevenue > 0 ? (prevFullGrossMargin / prevFullRevenue) * 100 : 0
+  const prevFullTheoreticalRevenue = prevFullRevenue // fully invoiced = same
+  const prevFullTheoreticalGrossMargin = prevFullGrossMargin
+  const prevFullBartPucciPct = prevFullRevenue > 0 ? (prevFullBartPucci / prevFullRevenue) * 100 : 0
 
   return {
     year: fy.label,
@@ -220,6 +287,13 @@ export function computeFiscalSummary(
     bartPucciGrowthPct: prevYearRevenue > 0
       ? ((totalBartPucci / Math.max(totalRevenue, 1)) - (prevYearBartPucci / Math.max(prevYearRevenue, 1))) * 100
       : 0,
+    prevFullRevenue,
+    prevFullGrossMargin,
+    prevFullGrossMarginPct,
+    prevFullTheoreticalRevenue,
+    prevFullTheoreticalGrossMargin,
+    prevFullDirectCosts,
+    prevFullBartPucciPct,
   }
 }
 
@@ -312,7 +386,7 @@ export function computeExpenseSummary(
 
   // Payroll priority: ledger entries (OD journal) > supplier invoices > manual setting
   const monthsElapsed = differenceInMonths(now, fy.start) + 1
-  let totalPayroll = payrollLedger.total > 0
+  const totalPayroll = payrollLedger.total > 0
     ? payrollLedger.total
     : totalPayrollFromInvoices > 0
     ? totalPayrollFromInvoices

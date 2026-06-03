@@ -4,12 +4,16 @@ import { useEffect, useState, useCallback } from 'react'
 import dynamic from 'next/dynamic'
 import HealthBar from '@/components/dashboard/HealthBar'
 import PLSection from '@/components/dashboard/PLSection'
-import CashFlowSection from '@/components/dashboard/CashFlowSection'
 import RunRateWidget from '@/components/dashboard/RunRateWidget'
 import PipelineTable from '@/components/dashboard/PipelineTable'
-import { DashboardData } from '@/types'
+import KPIStrip from '@/components/dashboard/KPIStrip'
+import { DashboardData, TreasuryItem } from '@/types'
+import { getFiscalYear } from '@/lib/calculations'
+import { format, addMonths } from 'date-fns'
 
 const RevenueChart = dynamic(() => import('@/components/dashboard/RevenueChart'), { ssr: false })
+const PipelineGrid = dynamic(() => import('@/components/dashboard/PipelineGrid'), { ssr: false })
+const TreasurySection = dynamic(() => import('@/components/dashboard/TreasurySection'), { ssr: false })
 
 function Spinner() {
   return (
@@ -28,6 +32,16 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
       <button className="btn btn-ghost" onClick={onRetry}>Réessayer</button>
     </div>
   )
+}
+
+function buildFiscalMonths(): string[] {
+  const now = new Date()
+  const fy = getFiscalYear(now)
+  const months: string[] = []
+  for (let i = 0; i < 12; i++) {
+    months.push(format(addMonths(fy.start, i), 'yyyy-MM'))
+  }
+  return months
 }
 
 export default function DashboardPage() {
@@ -64,6 +78,8 @@ export default function DashboardPage() {
     window.location.href = '/login'
   }
 
+  const fiscalMonths = buildFiscalMonths()
+
   return (
     <div className="page-wrapper">
       <div className="topbar">
@@ -97,16 +113,56 @@ export default function DashboardPage() {
         <>
           <HealthBar health={data.health} />
 
+          {/* 1. KPI Strip */}
+          <KPIStrip monthly={data.monthly} fiscal={data.fiscal} runRate={data.runRate} />
+
+          {/* 2. Margin/Revenue Chart */}
           <RevenueChart monthly={data.monthly} fiscal={data.fiscal} />
 
-          <section className="section">
-            <RunRateWidget runRate={data.runRate} />
-            <PipelineTable pipeline={data.pipeline} onRefresh={load} />
-          </section>
+          {/* 3. RunRate + PipelineGrid side by side */}
+          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', marginBottom: 16 }}>
+            <div style={{ width: '40%', minWidth: 0 }}>
+              <RunRateWidget runRate={data.runRate} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <PipelineGrid
+                months={fiscalMonths}
+                grid={data.pipelineGrid}
+                onRefresh={load}
+              />
+            </div>
+          </div>
 
-          <PLSection fiscal={data.fiscal} expenses={data.expenses} cogsDetail={data.cogsDetail} payrollDetail={data.payrollDetail} directorDetail={data.directorDetail} meuleryDetail={data.meuleryDetail} />
+          {/* Legacy pipeline table (hidden if grid has data, kept for backwards compat) */}
+          {data.pipeline.length > 0 && (
+            <section className="section">
+              <PipelineTable pipeline={data.pipeline} onRefresh={load} />
+            </section>
+          )}
 
-          <CashFlowSection cashFlow={data.cashFlow} />
+          {/* 4. P&L 3 columns */}
+          <PLSection
+            fiscal={data.fiscal}
+            expenses={data.expenses}
+            prevYearFullExpenses={data.prevYearFullExpenses}
+            cogsDetail={data.cogsDetail}
+            payrollDetail={data.payrollDetail}
+            directorDetail={data.directorDetail}
+            meuleryDetail={data.meuleryDetail}
+          />
+
+          {/* 5. Treasury section */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '24px 0 8px' }}>
+            <hr style={{ flex: 1, border: 'none', borderTop: '1px solid var(--border)' }} />
+            <span style={{ fontSize: '0.78rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>TRÉSORERIE</span>
+            <hr style={{ flex: 1, border: 'none', borderTop: '1px solid var(--border)' }} />
+          </div>
+
+          <TreasurySection
+            monthly={data.monthly}
+            pipelineGrid={data.pipelineGrid}
+            settings={data.settings}
+          />
 
           <SettingsPanel settings={data.settings} coverage={data.expenseCoverage} onSave={load} />
         </>
@@ -132,6 +188,7 @@ function SettingsPanel({
   const [payrollPrefixes, setPayrollPrefixes] = useState(settings.payrollAccountPrefixes.join(', '))
   const [directorSuppliers, setDirectorSuppliers] = useState(settings.directorChargeSuppliers.join(', '))
   const [meulerySuppliers, setMeulerySuppliers] = useState(settings.meuleryChargeSuppliers.join(', '))
+  const [treasuryItems, setTreasuryItems] = useState<TreasuryItem[]>(settings.treasuryItems ?? [])
   const [saving, setSaving] = useState(false)
 
   const handleSave = async () => {
@@ -147,11 +204,24 @@ function SettingsPanel({
         payrollAccountPrefixes: JSON.stringify(payrollPrefixes.split(',').map((v: string) => v.trim()).filter(Boolean)),
         directorChargeSuppliers: JSON.stringify(directorSuppliers.split(',').map((v: string) => v.trim()).filter(Boolean)),
         meuleryChargeSuppliers: JSON.stringify(meulerySuppliers.split(',').map((v: string) => v.trim()).filter(Boolean)),
+        treasuryItems: JSON.stringify(treasuryItems),
       }),
     })
     setSaving(false)
     setOpen(false)
     onSave()
+  }
+
+  const updateTreasuryItem = (idx: number, field: keyof TreasuryItem, value: string | number) => {
+    setTreasuryItems((prev) => prev.map((item, i) => i === idx ? { ...item, [field]: value } : item))
+  }
+
+  const addTreasuryItem = () => {
+    setTreasuryItems((prev) => [...prev, { name: '', monthlyAmount: 0, dayOfMonth: 1 }])
+  }
+
+  const removeTreasuryItem = (idx: number) => {
+    setTreasuryItems((prev) => prev.filter((_, i) => i !== idx))
   }
 
   const coveragePct = coverage.total > 0 ? Math.round((coverage.categorized / coverage.total) * 100) : 0
@@ -217,6 +287,79 @@ function SettingsPanel({
           <label>Charges Meuleries (noms fournisseurs)</label>
           <input className="form-input" value={meulerySuppliers}
             onChange={(e) => setMeulerySuppliers(e.target.value)} placeholder="carrelages lupi, little sea" />
+        </div>
+      </div>
+
+      {/* Treasury Items */}
+      <div style={{ marginTop: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600 }}>Postes de trésorerie fixes</h3>
+          <button className="btn btn-ghost" style={{ fontSize: '0.78rem' }} onClick={addTreasuryItem}>+ Ajouter</button>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.83rem' }}>
+            <thead>
+              <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                <th style={{ textAlign: 'left', padding: '6px 8px', color: 'var(--text-secondary)' }}>Nom</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px', color: 'var(--text-secondary)' }}>Montant mensuel (€)</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px', color: 'var(--text-secondary)' }}>Jour du mois</th>
+                <th style={{ textAlign: 'left', padding: '6px 8px', color: 'var(--text-secondary)' }}>Mot-clé (optionnel)</th>
+                <th style={{ width: 32 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {treasuryItems.map((item, idx) => (
+                <tr key={idx} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ padding: '4px 8px' }}>
+                    <input
+                      className="form-input"
+                      style={{ fontSize: '0.83rem', padding: '4px 8px' }}
+                      value={item.name}
+                      onChange={(e) => updateTreasuryItem(idx, 'name', e.target.value)}
+                      placeholder="Nom du poste"
+                    />
+                  </td>
+                  <td style={{ padding: '4px 8px' }}>
+                    <input
+                      className="form-input"
+                      style={{ fontSize: '0.83rem', padding: '4px 8px', textAlign: 'right' }}
+                      type="number"
+                      value={item.monthlyAmount}
+                      onChange={(e) => updateTreasuryItem(idx, 'monthlyAmount', parseFloat(e.target.value) || 0)}
+                    />
+                  </td>
+                  <td style={{ padding: '4px 8px' }}>
+                    <input
+                      className="form-input"
+                      style={{ fontSize: '0.83rem', padding: '4px 8px', textAlign: 'right', width: 70 }}
+                      type="number"
+                      min={1}
+                      max={31}
+                      value={item.dayOfMonth}
+                      onChange={(e) => updateTreasuryItem(idx, 'dayOfMonth', parseInt(e.target.value) || 1)}
+                    />
+                  </td>
+                  <td style={{ padding: '4px 8px' }}>
+                    <input
+                      className="form-input"
+                      style={{ fontSize: '0.83rem', padding: '4px 8px' }}
+                      value={item.keyword ?? ''}
+                      onChange={(e) => updateTreasuryItem(idx, 'keyword', e.target.value)}
+                      placeholder="ex: crédit agricole"
+                    />
+                  </td>
+                  <td style={{ padding: '4px 8px', textAlign: 'center' }}>
+                    <button
+                      onClick={() => removeTreasuryItem(idx)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', fontSize: '1rem' }}
+                    >
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 

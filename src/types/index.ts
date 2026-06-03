@@ -57,6 +57,19 @@ export interface MonthlyRevenue {
   prevYearCumRevenue: number
   prevYearCumBartPucci: number
   prevYearCumGrossMargin: number
+  // Expense breakdown fields
+  payroll: number
+  externalCosts: number
+  directorCharges: number
+  meuleryCharges: number
+  ebe: number
+  cumPayroll: number
+  cumExternalCosts: number
+  cumDirectorCharges: number
+  cumMeuleryCharges: number
+  cumEbe: number
+  prevYearPayroll: number
+  prevYearCumPayroll: number
 }
 
 export interface FiscalYearSummary {
@@ -79,6 +92,14 @@ export interface FiscalYearSummary {
   revenueGrowthPct: number
   marginGrowthPct: number
   bartPucciGrowthPct: number
+  // Prev year full (complete 12-month exercise)
+  prevFullRevenue: number
+  prevFullGrossMargin: number
+  prevFullGrossMarginPct: number
+  prevFullTheoreticalRevenue: number
+  prevFullTheoreticalGrossMargin: number
+  prevFullDirectCosts: number
+  prevFullBartPucciPct: number
 }
 
 export interface RunRateProjection {
@@ -104,6 +125,12 @@ export interface PipelineEntry {
   isDuplicate: boolean
   createdAt: string
   updatedAt: string
+}
+
+export interface PipelineGrid {
+  clients: string[]
+  months: string[]
+  entries: { clientName: string; month: string; amount: number }[]
 }
 
 export interface ExpenseSummary {
@@ -154,6 +181,7 @@ export interface DashboardData {
   health: HealthStatus
   unpaidInvoices: PLCustomerInvoice[]
   pipeline: PipelineEntry[]
+  pipelineGrid: PipelineGrid
   settings: AppSettings
   expenseCoverage: { categorized: number; total: number; totalAmount: number; categorizedAmount: number }
   cogsDetail: { date: string; supplier: string; accountCode: string; amount: number }[]
@@ -161,7 +189,22 @@ export interface DashboardData {
   directorDetail: { date: string; supplier: string; accountCode: string; amount: number }[]
   meuleryDetail: { date: string; supplier: string; accountCode: string; amount: number }[]
   prevYearInvoiceCount: number
+  prevPayroll: number
+  prevYearFullExpenses: {
+    totalPayroll: number
+    totalDirectCosts: number
+    totalExternalCosts: number
+    totalDirectorCharges: number
+    totalMeuleryCharges: number
+  }
   pennylaneError?: string | null
+}
+
+export interface TreasuryItem {
+  name: string
+  monthlyAmount: number
+  dayOfMonth: number
+  keyword?: string
 }
 
 export interface AppSettings {
@@ -172,6 +215,7 @@ export interface AppSettings {
   payrollAccountPrefixes: string[]
   directorChargeSuppliers: string[]   // Charges dirigeant — par nom fournisseur
   meuleryChargeSuppliers: string[]    // Charges Meuleries — par nom fournisseur
+  treasuryItems: TreasuryItem[]
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -182,4 +226,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   payrollAccountPrefixes: ['641', '642', '644', '645', '646', '647', '648'],
   directorChargeSuppliers: ['dmevent', 'enolane', 'amazon'],
   meuleryChargeSuppliers: ['carrelages lupi', 'little sea'],
+  treasuryItems: [
+    { name: 'Salaires (hors dirigeant)', monthlyAmount: 0, dayOfMonth: 30 },
+    { name: 'Salaire dirigeant', monthlyAmount: 0, dayOfMonth: 30 },
+    { name: 'Remboursement emprunt', monthlyAmount: 0, dayOfMonth: 5, keyword: 'crédit agricole' },
+    { name: 'Voiture (ARKEA)', monthlyAmount: 0, dayOfMonth: 15, keyword: 'arkea' },
+    { name: 'Loyer appart', monthlyAmount: 750, dayOfMonth: 1, keyword: 'arthur & driss' },
+  ],
 }
