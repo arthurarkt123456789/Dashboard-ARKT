@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import { isAuthenticated } from '@/lib/auth'
-import { fetchCustomerInvoices, fetchSupplierInvoices, fetchLedgerEntries, fetchPayrollFromLedger } from '@/lib/pennylane'
+import { fetchCustomerInvoices, fetchSupplierInvoices, fetchLedgerEntries, fetchPayrollFromLedger, fetchPnLAccountSums, sumAccountPrefixes } from '@/lib/pennylane'
 import { getSettings } from '@/lib/settings'
 import { prisma } from '@/lib/prisma'
 import {
@@ -161,17 +161,42 @@ export async function GET() {
   const cogsDetail = fyExpenses.filter((e) => classify(e) === 'cogs').map(toDetail).sort((a, b) => b.amount - a.amount)
   const payrollDetail = fyExpenses.filter((e) => classify(e) === 'payroll').map(toDetail).sort((a, b) => b.amount - a.amount)
 
-  // Prev year payroll
-  const prevPayroll = prevPayrollLedger.total > 0 ? prevPayrollLedger.total : 0
+  // === EXACT P&L FROM ACCOUNT LINES (matches Pennylane exactly) ===
+  // Fetch all ledger entry lines for both years and sum by account prefix
+  const [currentAccountSums, prevAccountSums] = await Promise.all([
+    fetchPnLAccountSums(fyStart, fyNow).catch(() => new Map<string, Map<string, number>>()),
+    fetchPnLAccountSums(prevFyStart, prevFyEnd).catch(() => new Map<string, Map<string, number>>()),
+  ])
 
-  // Prev year full expenses
-  const classifyPrev = (e: PLSupplierInvoice) => classifyByAccountCode(prevCategoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes)
-  const prevPayrollFromInvoices = prevExpenses.filter((e) => classifyPrev(e) === 'payroll').reduce((s, e) => s + ht(e), 0)
+  const cogsPfx = settings.cogsAccountPrefixes
+  const payrollPfx = settings.payrollAccountPrefixes
+
+  // All 6xx prefixes not COGS or payroll = external
+  const allPrevPfx = new Set<string>()
+  for (const monthMap of Array.from(prevAccountSums.values()))
+    for (const p of Array.from(monthMap.keys())) allPrevPfx.add(p)
+  const externalPfx = Array.from(allPrevPfx).filter(
+    (p) => !cogsPfx.some((c) => p.startsWith(c) || c.startsWith(p)) &&
+           !payrollPfx.some((c) => p.startsWith(c) || c.startsWith(p))
+  )
+
   const prevYearFullExpenses = {
-    totalPayroll: prevPayroll + prevPayrollFromInvoices,  // OD journal + supplier invoices (mutuelle etc.)
-    totalDirectCosts: prevExpenses.filter((e) => classifyPrev(e) === 'cogs').reduce((s, e) => s + ht(e), 0),
-    totalExternalCosts: prevExpenses.filter((e) => classifyPrev(e) === 'external').reduce((s, e) => s + ht(e), 0),
+    totalPayroll: sumAccountPrefixes(prevAccountSums, payrollPfx) + (prevPayrollLedger.total > 0 ? prevPayrollLedger.total : 0),
+    totalDirectCosts: sumAccountPrefixes(prevAccountSums, cogsPfx),
+    totalExternalCosts: sumAccountPrefixes(prevAccountSums, externalPfx),
   }
+
+  // Override fiscal summary with exact account-based values for N-1 full year
+  const exactPrevFullCOGS = prevYearFullExpenses.totalDirectCosts
+  const exactPrevFullRevenue = prevInvoices.reduce((s, inv) => s + (parseFloat(inv.currency_amount_before_tax) || 0), 0)
+  fiscal.prevFullRevenue = exactPrevFullRevenue
+  fiscal.prevFullDirectCosts = exactPrevFullCOGS
+  fiscal.prevFullGrossMargin = exactPrevFullRevenue - exactPrevFullCOGS
+  fiscal.prevFullGrossMarginPct = exactPrevFullRevenue > 0 ? (fiscal.prevFullGrossMargin / exactPrevFullRevenue) * 100 : 0
+  fiscal.prevFullTheoreticalRevenue = exactPrevFullRevenue
+  fiscal.prevFullTheoreticalGrossMargin = fiscal.prevFullGrossMargin
+
+  const prevPayroll = prevPayrollLedger.total > 0 ? prevPayrollLedger.total : 0
 
   const prevYearInvoiceCount = prevInvoices.length
 

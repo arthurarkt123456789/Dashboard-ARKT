@@ -306,6 +306,95 @@ export async function fetchPayrollFromLedger(
   return { monthly, total }
 }
 
+// Scan ALL ledger entries for a period and sum 6xx debit lines by account prefix.
+// Returns Map<YYYY-MM, Map<3-digit-prefix, amount>> — exact same data Pennylane uses for its P&L.
+export async function fetchPnLAccountSums(
+  fromDate: string,
+  toDate: string
+): Promise<Map<string, Map<string, number>>> {
+  const cacheKey = `pnl_${fromDate}_${toDate}`
+  const cached = getFromCache<Map<string, Map<string, number>>>(cacheKey)
+  if (cached) return cached
+
+  // Step 1: collect all entry IDs in the period
+  const entryIds: { id: number; date: string }[] = []
+  let cursor: string | undefined
+  let pages = 0
+
+  do {
+    const params: Record<string, string> = { sort: '-date', limit: '100' }
+    if (cursor) params.cursor = cursor
+
+    const res = await plFetch<{
+      items: { id: number; date: string; status?: string }[]
+      has_more: boolean
+      next_cursor?: string
+    }>('/ledger_entries', params)
+
+    let pastStart = false
+    for (const entry of res.items ?? []) {
+      if (entry.date > toDate) continue
+      if (entry.date < fromDate) { pastStart = true; break }
+      if (entry.status === 'validation_needed') continue // skip unaccounted
+      entryIds.push({ id: entry.id, date: entry.date })
+    }
+
+    cursor = !pastStart && res.has_more && res.next_cursor ? res.next_cursor : undefined
+    pages++
+    if (pages > 60) break // 6000 entries = ~4 years of history
+  } while (cursor)
+
+  // Step 2: fetch ledger lines for all entries (in-memory cache)
+  const monthly = new Map<string, Map<string, number>>()
+  const CONCURRENCY = 8
+
+  for (let i = 0; i < entryIds.length; i += CONCURRENCY) {
+    const batch = entryIds.slice(i, i + CONCURRENCY)
+    const results = await Promise.allSettled(
+      batch.map((e) => fetchLedgerEntry(e.id).then((entry) => ({ date: e.date, lines: entry.ledger_entry_lines ?? [] })))
+    )
+
+    for (const r of results) {
+      if (r.status !== 'fulfilled') continue
+      const monthKey = r.value.date.slice(0, 7)
+      if (!monthly.has(monthKey)) monthly.set(monthKey, new Map())
+      const monthSums = monthly.get(monthKey)!
+
+      for (const line of r.value.lines) {
+        const debit = parseFloat(line.debit) || 0
+        if (debit <= 0) continue
+        const code = line.ledger_account.number
+        if (!code.startsWith('6')) continue // only expense accounts
+        const prefix3 = code.slice(0, 3)
+        monthSums.set(prefix3, (monthSums.get(prefix3) ?? 0) + debit)
+      }
+    }
+  }
+
+  setInCache(cacheKey, monthly, CACHE_TTL_MS)
+  return monthly
+}
+
+// Sum a monthly map across a date range for given account prefixes
+export function sumAccountPrefixes(
+  monthly: Map<string, Map<string, number>>,
+  prefixes: string[],
+  fromMonth?: string,
+  toMonth?: string
+): number {
+  let total = 0
+  for (const [month, sums] of Array.from(monthly.entries())) {
+    if (fromMonth && month < fromMonth) continue
+    if (toMonth && month > toMonth) continue
+    for (const [prefix, amount] of Array.from(sums.entries())) {
+      if (prefixes.some((p) => prefix.startsWith(p) || p.startsWith(prefix))) {
+        total += amount
+      }
+    }
+  }
+  return total
+}
+
 export function clearCache() {
   cache.clear()
 }
