@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import { isAuthenticated } from '@/lib/auth'
-import { fetchCustomerInvoices, fetchSupplierInvoices, fetchAllSupplierCategories, PLInvoiceCategory } from '@/lib/pennylane'
+import { fetchCustomerInvoices, fetchSupplierInvoices, fetchLedgerEntries } from '@/lib/pennylane'
 import { getSettings } from '@/lib/settings'
 import { prisma } from '@/lib/prisma'
 import {
@@ -83,12 +83,12 @@ export async function GET() {
     updatedAt: p.updatedAt.toISOString(),
   }))
 
-  // Fetch categories with a hard 6s timeout — current FY only, skip N-1 on first load
-  const timeout = new Promise<Map<number, PLInvoiceCategory[]>>((resolve) =>
+  // Fetch ledger entries (accounting codes) — only for complete invoices, 6s timeout
+  const timeout = new Promise<Map<number, string | null>>((resolve) =>
     setTimeout(() => resolve(new Map()), 6000)
   )
   const categoryMap = await Promise.race([
-    fetchAllSupplierCategories(currentExpenses),
+    fetchLedgerEntries(currentExpenses),
     timeout,
   ]).catch(() => new Map())
 
@@ -113,14 +113,12 @@ export async function GET() {
 
   // Coverage stats: how many invoices have Pennylane accounting categories
   const ht = (e: PLSupplierInvoice) => parseFloat(e.currency_amount_before_tax) || 0
-  const categorized = currentExpenses.filter((e) => (categoryMap.get(e.id) ?? []).length > 0).length
+  const categorized = currentExpenses.filter((e) => categoryMap.get(e.id) != null).length
   const expenseCoverage = {
     total: currentExpenses.length,
     categorized,
     totalAmount: currentExpenses.reduce((s, e) => s + ht(e), 0),
-    categorizedAmount: currentExpenses
-      .filter((e) => (categoryMap.get(e.id) ?? []).length > 0)
-      .reduce((s, e) => s + ht(e), 0),
+    categorizedAmount: currentExpenses.filter((e) => categoryMap.get(e.id) != null).reduce((s, e) => s + ht(e), 0),
   }
 
   return NextResponse.json({

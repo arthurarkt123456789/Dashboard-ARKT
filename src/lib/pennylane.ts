@@ -63,60 +63,68 @@ async function paginateAll<T>(path: string, baseParams: Record<string, string> =
   return results
 }
 
-// --- Category types ---
+// --- Ledger entry types ---
 
-export interface PLPlanItem {
-  number: string  // e.g. "611", "641"
-  label: string   // e.g. "Sous-traitance générale"
-}
-
-export interface PLInvoiceCategory {
+export interface PLLedgerLine {
   id: number
-  amount: string
-  plan_item: PLPlanItem
+  debit: string
+  credit: string
+  ledger_account: { number: string }
 }
 
-// Fetch categories for one invoice (cached per invoice ID)
-async function fetchInvoiceCategories(invoiceId: number): Promise<PLInvoiceCategory[]> {
-  const cacheKey = `cat_${invoiceId}`
-  const cached = getFromCache<PLInvoiceCategory[]>(cacheKey)
+export interface PLLedgerEntry {
+  id: number
+  ledger_entry_lines: PLLedgerLine[]
+}
+
+// Extract the expense account code (6xx debit lines, exclude 44x TVA)
+export function extractAccountCode(lines: PLLedgerLine[]): string | null {
+  const line = lines.find(
+    (l) => parseFloat(l.debit) > 0 && l.ledger_account.number.startsWith('6')
+  )
+  return line?.ledger_account.number ?? null
+}
+
+async function fetchLedgerEntry(invoiceId: number): Promise<PLLedgerEntry> {
+  const cacheKey = `ledger_${invoiceId}`
+  const cached = getFromCache<PLLedgerEntry>(cacheKey)
   if (cached) return cached
 
-  const res = await plFetch<{ items: PLInvoiceCategory[] }>(
-    `/supplier_invoices/${invoiceId}/categories`
-  )
-  const items = res.items ?? []
-  setInCache(cacheKey, items, CATEGORY_CACHE_TTL_MS)
-  return items
+  const entry = await plFetch<PLLedgerEntry>(`/ledger_entries/${invoiceId}`)
+  setInCache(cacheKey, entry, CATEGORY_CACHE_TTL_MS)
+  return entry
 }
 
-// Fetch categories for all invoices with concurrency limit (max 8 parallel to respect rate limit)
-export async function fetchAllSupplierCategories(
+// Fetch ledger entries for all COMPLETE invoices (only those have accounting lines)
+export async function fetchLedgerEntries(
   invoices: PLSupplierInvoice[]
-): Promise<Map<number, PLInvoiceCategory[]>> {
+): Promise<Map<number, string | null>> {
   const CONCURRENCY = 5
-  const result = new Map<number, PLInvoiceCategory[]>()
+  const result = new Map<number, string | null>()
 
-  // Only fetch for invoices not already in cache
-  const toFetch = invoices.filter((inv) => getFromCache(`cat_${inv.id}`) === null)
+  // Only complete invoices have ledger lines — skip the rest
+  const toFetch = invoices.filter(
+    (inv) => inv.accounting_status === 'complete' && getFromCache(`ledger_${inv.id}`) === null
+  )
 
-  // Process with concurrency limit
   for (let i = 0; i < toFetch.length; i += CONCURRENCY) {
     const batch = toFetch.slice(i, i + CONCURRENCY)
-    const batchResults = await Promise.allSettled(
-      batch.map((inv) => fetchInvoiceCategories(inv.id).then((cats) => ({ id: inv.id, cats })))
+    const results = await Promise.allSettled(
+      batch.map((inv) =>
+        fetchLedgerEntry(inv.id).then((e) => ({ id: inv.id, code: extractAccountCode(e.ledger_entry_lines) }))
+      )
     )
-    for (const r of batchResults) {
-      if (r.status === 'fulfilled') result.set(r.value.id, r.value.cats)
+    for (const r of results) {
+      if (r.status === 'fulfilled') result.set(r.value.id, r.value.code)
     }
-    if (i + CONCURRENCY < toFetch.length) await new Promise((r) => setTimeout(r, 500))
+    if (i + CONCURRENCY < toFetch.length) await new Promise((r) => setTimeout(r, 400))
   }
 
-  // Also include already-cached ones
+  // Add already-cached entries
   for (const inv of invoices) {
     if (!result.has(inv.id)) {
-      const cached = getFromCache<PLInvoiceCategory[]>(`cat_${inv.id}`)
-      result.set(inv.id, cached ?? [])
+      const cached = getFromCache<PLLedgerEntry>(`ledger_${inv.id}`)
+      result.set(inv.id, cached ? extractAccountCode(cached.ledger_entry_lines) : null)
     }
   }
 

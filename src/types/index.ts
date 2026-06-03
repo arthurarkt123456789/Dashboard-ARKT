@@ -22,8 +22,9 @@ export interface PLSupplierInvoice {
   deadline: string
   currency_amount_before_tax: string
   currency_amount: string
-  payment_status: string   // "to_be_paid" | "paid" | "scheduled" | ...
+  payment_status: string
   remaining_amount_without_tax: string
+  accounting_status: string  // "validation_needed" | "entry" | "complete" | "archived"
   supplier?: { id: number; url: string }
 }
 
