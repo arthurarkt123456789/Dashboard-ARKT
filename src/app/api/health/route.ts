@@ -8,34 +8,25 @@ export async function GET() {
 
   const headers = { Authorization: `Bearer ${apiKey}` }
 
-  // Get a few supplier invoices
-  const res = await fetch('https://app.pennylane.com/api/external/v2/supplier_invoices?limit=5', { headers })
+  // Fetch enough to find a complete invoice
+  const res = await fetch('https://app.pennylane.com/api/external/v2/supplier_invoices?limit=100', { headers })
   const data = await res.json()
-  const items = data?.items ?? []
+  const items: { id: number; label: string; accounting_status: string }[] = data?.items ?? []
 
-  // Try fetching ledger entry for the first invoice (id is the same)
-  const first = items[0]
-  const complete = items.find((i: { accounting_status: string }) => i.accounting_status === 'complete') ?? first
+  const complete = items.find(i => i.accounting_status === 'complete')
+  if (!complete) {
+    return NextResponse.json({ ok: true, error: 'No complete invoice found in first 100', statuses: items.map(i => i.accounting_status) })
+  }
 
-  const results = await Promise.all([
-    // Test 1: GET /ledger_entries/{id}
-    fetch(`https://app.pennylane.com/api/external/v2/ledger_entries/${complete.id}`, { headers })
-      .then(r => r.json()).catch(e => ({ error: String(e) })),
-
-    // Test 2: GET /supplier_invoices/{id}/ledger_entries (maybe sub-resource?)
-    fetch(`https://app.pennylane.com/api/external/v2/supplier_invoices/${complete.id}/ledger_entries`, { headers })
-      .then(r => r.json()).catch(e => ({ error: String(e) })),
-
-    // Test 3: GET /ledger_entries?filter[invoice_id]=...
-    fetch(`https://app.pennylane.com/api/external/v2/ledger_entries?filter[source_id]=${complete.id}`, { headers })
-      .then(r => r.json()).catch(e => ({ error: String(e) })),
-  ])
+  const ledger = await fetch(
+    `https://app.pennylane.com/api/external/v2/ledger_entries/${complete.id}`,
+    { headers }
+  ).then(r => r.json())
 
   return NextResponse.json({
     ok: true,
-    invoice: { id: complete.id, label: complete.label, accounting_status: complete.accounting_status, ledger_entry: complete.ledger_entry },
-    test1_ledger_entry_direct: results[0],
-    test2_sub_resource: results[1],
-    test3_filter: results[2],
+    invoice: { id: complete.id, label: complete.label, accounting_status: complete.accounting_status },
+    ledger_entry_lines: ledger.ledger_entry_lines,
+    all_keys: Object.keys(ledger),
   })
 }
