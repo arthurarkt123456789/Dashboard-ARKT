@@ -2,23 +2,11 @@ export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import { isAuthenticated } from '@/lib/auth'
-import { fetchCustomerInvoices, fetchSupplierInvoices, fetchLedgerEntries, fetchPayrollFromLedger, fetchPnLAccountSums, sumAccountPrefixes } from '@/lib/pennylane'
+import { getAllCustomerInvoices, getExpenseAccountSums } from '@/lib/pennylane'
+import { computePnL, computeMonthly, getFiscalYear, getPrevFiscalYear } from '@/lib/pnl'
 import { getSettings } from '@/lib/settings'
 import { prisma } from '@/lib/prisma'
-import {
-  computeMonthlyRevenue,
-  computeFiscalSummary,
-  computeRunRate,
-  computeExpenseSummary,
-  computeCashFlow,
-  computeHealthStatus,
-  detectDuplicates,
-  getFiscalYear,
-  getPrevFiscalYear,
-  classifyByAccountCode,
-} from '@/lib/calculations'
-import { format, addMonths } from 'date-fns'
-import { PipelineEntry, PipelineGrid, PLCustomerInvoice, PLSupplierInvoice, DEFAULT_SETTINGS, extractClientName } from '@/types'
+import { format } from 'date-fns'
 
 export async function GET() {
   if (!(await isAuthenticated())) {
@@ -28,195 +16,69 @@ export async function GET() {
   const now = new Date()
   const fy = getFiscalYear(now)
   const prev = getPrevFiscalYear(now)
-  const fetchFrom = format(addMonths(prev.start, -2), 'yyyy-MM-dd')
-  const fetchTo = format(fy.end, 'yyyy-MM-dd')
 
-  const hasPennylane = !!process.env.PENNYLANE_API_KEY
+  const fyStart = format(fy.start, 'yyyy-MM-dd')
+  const fyNow = format(now, 'yyyy-MM-dd')
+  const prevStart = format(prev.start, 'yyyy-MM-dd')
+  const prevEnd = format(prev.end, 'yyyy-MM-dd')
 
-  // Fetch data — fall back to empty arrays if Pennylane key not configured
-  let currentInvoices: PLCustomerInvoice[] = []
-  let currentExpenses: PLSupplierInvoice[] = []
-  let prevInvoices: PLCustomerInvoice[] = []
-  let prevExpenses: PLSupplierInvoice[] = []
-  let pennylaneError: string | null = null
-
-  if (hasPennylane) {
-    try {
-      ;[currentInvoices, currentExpenses, prevInvoices, prevExpenses] = await Promise.all([
-        fetchCustomerInvoices(format(fy.start, 'yyyy-MM-dd'), fetchTo),
-        fetchSupplierInvoices(format(fy.start, 'yyyy-MM-dd'), fetchTo),
-        fetchCustomerInvoices(format(prev.start, 'yyyy-MM-dd'), format(prev.end, 'yyyy-MM-dd')),
-        fetchSupplierInvoices(format(prev.start, 'yyyy-MM-dd'), format(prev.end, 'yyyy-MM-dd')),
-      ])
-    } catch (e) {
-      pennylaneError = e instanceof Error ? e.message : 'Erreur Pennylane'
-    }
-  } else {
-    pennylaneError = 'Clé API Pennylane non configurée — ajoutez PENNYLANE_API_KEY dans les variables Railway.'
-  }
-
-  const [settings, rawPipeline, rawPipelineGrid] = await Promise.all([
-    getSettings().catch(() => DEFAULT_SETTINGS),
-    prisma.pipelineEntry.findMany({ orderBy: { expectedDate: 'asc' } }).catch(() => []),
-    prisma.pipelineMonthEntry.findMany().catch(() => []),
+  const [allInvoices, settings, rawPipeline] = await Promise.all([
+    getAllCustomerInvoices(),
+    getSettings(),
+    prisma.pipelineEntry.findMany({ orderBy: { expectedDate: 'asc' } }),
   ])
 
-  const recentInvoices = currentInvoices.filter((inv) => new Date(inv.date) >= addMonths(now, -3))
-  const dupIds = detectDuplicates(
-    rawPipeline.map((p) => ({
-      id: p.id,
-      clientName: p.clientName,
-      amount: p.amount,
-      expectedDate: p.expectedDate ? format(p.expectedDate, 'yyyy-MM-dd') : null,
-    })),
-    recentInvoices
-  )
+  const currentInvoices = allInvoices.filter((inv) => inv.date >= fyStart && inv.date <= fyNow)
+  const prevInvoices = allInvoices.filter((inv) => inv.date >= prevStart && inv.date <= prevEnd)
 
-  const pipeline: PipelineEntry[] = rawPipeline.map((p) => ({
+  const [currentSums, prevSums] = await Promise.all([
+    getExpenseAccountSums(fyStart, fyNow),
+    getExpenseAccountSums(prevStart, prevEnd),
+  ])
+
+  // P&L computations
+  const currentPnL = computePnL(currentInvoices, currentSums, 0, fyStart, fyNow)
+  const prevPnL = computePnL(prevInvoices, prevSums, 0, prevStart, prevEnd)
+  const prevFullPnL = computePnL(prevInvoices, prevSums, 0, prevStart, prevEnd)
+
+  // Monthly for chart (current FY only)
+  const monthly = computeMonthly(allInvoices, currentSums, new Map(), fy.start)
+  const prevMonthly = computeMonthly(allInvoices, prevSums, new Map(), prev.start)
+
+  // Pipeline
+  const pipeline = rawPipeline.map((p) => ({
     id: p.id,
     clientName: p.clientName,
     description: p.description,
     amount: p.amount,
-    expectedDate: p.expectedDate ? format(p.expectedDate, 'yyyy-MM-dd') : null,
+    expectedDate: p.expectedDate ? p.expectedDate.toISOString().slice(0, 10) : null,
     isRecurring: p.isRecurring,
     frequency: p.frequency,
-    isDuplicate: dupIds.has(p.id),
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   }))
 
-  // Build pipelineGrid
-  const gridClientSet = new Set(rawPipelineGrid.map((e) => e.clientName))
-  const gridClients = Array.from(gridClientSet).sort()
-  const pipelineGrid: PipelineGrid = {
-    clients: gridClients,
-    months: [], // filled on client side from fiscal year
-    entries: rawPipelineGrid.map((e) => ({ clientName: e.clientName, month: e.month, amount: e.amount })),
+  // Run-rate
+  const pipelineTotal = pipeline
+    .filter((p) => !p.expectedDate || new Date(p.expectedDate) >= now)
+    .reduce((s, p) => s + p.amount, 0)
+
+  const runRate = {
+    ytd: currentPnL.revenue,
+    unpaid: currentPnL.invoicedUnpaid,
+    pipeline: pipelineTotal,
+    total: currentPnL.revenue + currentPnL.invoicedUnpaid + pipelineTotal,
+    prevFullRevenue: prevFullPnL.revenue,
   }
-
-  const fyStart = format(getFiscalYear(now).start, 'yyyy-MM-dd')
-  const fyNow = format(now, 'yyyy-MM-dd')
-  const prevFyStart = format(prev.start, 'yyyy-MM-dd')
-  const prevFyEnd = format(prev.end, 'yyyy-MM-dd')
-
-  // Ledger entries: DB-cached (fast after first load), then payroll sequentially to avoid rate limits
-  const allExpenses = [...currentExpenses, ...prevExpenses]
-  const categoryMap = await fetchLedgerEntries(allExpenses).catch(() => new Map<number, string | null>())
-
-  // Split into current and prev category maps
-  const currentExpenseIds = new Set(currentExpenses.map((e) => e.id))
-  const prevCategoryMap = new Map<number, string | null>()
-  const currentCategoryMap = new Map<number, string | null>()
-  for (const [id, code] of Array.from(categoryMap.entries())) {
-    if (currentExpenseIds.has(id)) currentCategoryMap.set(id, code)
-    else prevCategoryMap.set(id, code)
-  }
-
-  // Fetch payroll sequentially (not parallel) to avoid rate limits
-  const payrollLedger = await fetchPayrollFromLedger(fyStart, fyNow)
-    .catch(() => ({ monthly: new Map<string, number>(), total: 0 }))
-  const prevPayrollLedger = await fetchPayrollFromLedger(prevFyStart, prevFyEnd)
-    .catch(() => ({ monthly: new Map<string, number>(), total: 0 }))
-
-  const monthly = computeMonthlyRevenue(
-    currentInvoices, prevInvoices, currentExpenses, prevExpenses,
-    settings, now, currentCategoryMap, prevCategoryMap,
-    payrollLedger.monthly, prevPayrollLedger.monthly
-  )
-
-  const invoicedUnpaid = currentInvoices
-    .filter((inv) => !inv.paid && parseFloat(inv.remaining_amount_without_tax) > 0)
-    .reduce((s, inv) => s + (parseFloat(inv.remaining_amount_without_tax) || 0), 0)
-
-  const fiscal = computeFiscalSummary(monthly, now, invoicedUnpaid, prevInvoices, prevExpenses, settings, prevCategoryMap)
-  const runRate = computeRunRate(currentInvoices, pipeline, settings, now)
-
-  const expenses = computeExpenseSummary(currentExpenses, settings, now, currentCategoryMap, payrollLedger)
-  const cashFlow = computeCashFlow(currentInvoices, currentExpenses, pipeline, settings, now, currentCategoryMap)
-  const health = computeHealthStatus(fiscal, runRate, cashFlow)
-
-  const unpaidInvoices = currentInvoices
-    .filter((inv) => !inv.paid && parseFloat(inv.remaining_amount_without_tax) > 0)
-    .sort((a, b) => (a.deadline ?? '').localeCompare(b.deadline ?? ''))
-
-  const prevYearTotal = prevInvoices.reduce((s, inv) => s + (parseFloat(inv.currency_amount_before_tax) || 0), 0)
-  runRate.prevYearTotal = prevYearTotal
-  runRate.variance = runRate.total - prevYearTotal
-  runRate.variancePct = prevYearTotal > 0 ? ((runRate.total - prevYearTotal) / prevYearTotal) * 100 : 0
-
-  const ht = (e: PLSupplierInvoice) => parseFloat(e.currency_amount_before_tax) || 0
-  const categorized = currentExpenses.filter((e) => currentCategoryMap.get(e.id) != null).length
-  const expenseCoverage = {
-    total: currentExpenses.length,
-    categorized,
-    totalAmount: currentExpenses.reduce((s, e) => s + ht(e), 0),
-    categorizedAmount: currentExpenses.filter((e) => currentCategoryMap.get(e.id) != null).reduce((s, e) => s + ht(e), 0),
-  }
-
-  // Detail lines for COGS and payroll — for verification in the UI
-  const fyExpenses = currentExpenses.filter((e) => e.date >= fyStart && e.date <= fyNow)
-  const classify = (e: PLSupplierInvoice) => classifyByAccountCode(currentCategoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes)
-  const toDetail = (e: PLSupplierInvoice) => ({ date: e.date, supplier: extractClientName(e.label), accountCode: currentCategoryMap.get(e.id) ?? '—', amount: ht(e) })
-
-  const cogsDetail = fyExpenses.filter((e) => classify(e) === 'cogs').map(toDetail).sort((a, b) => b.amount - a.amount)
-  const payrollDetail = fyExpenses.filter((e) => classify(e) === 'payroll').map(toDetail).sort((a, b) => b.amount - a.amount)
-
-  // === EXACT P&L FROM ACCOUNT LINES (matches Pennylane exactly) ===
-  // Fetch all ledger entry lines for both years and sum by account prefix
-  const [currentAccountSums, prevAccountSums] = await Promise.all([
-    fetchPnLAccountSums(fyStart, fyNow).catch(() => new Map<string, Map<string, number>>()),
-    fetchPnLAccountSums(prevFyStart, prevFyEnd).catch(() => new Map<string, Map<string, number>>()),
-  ])
-
-  const cogsPfx = settings.cogsAccountPrefixes
-  const payrollPfx = settings.payrollAccountPrefixes
-
-  // All 6xx prefixes not COGS or payroll = external
-  const allPrevPfx = new Set<string>()
-  for (const monthMap of Array.from(prevAccountSums.values()))
-    for (const p of Array.from(monthMap.keys())) allPrevPfx.add(p)
-  const externalPfx = Array.from(allPrevPfx).filter(
-    (p) => !cogsPfx.some((c) => p.startsWith(c) || c.startsWith(p)) &&
-           !payrollPfx.some((c) => p.startsWith(c) || c.startsWith(p))
-  )
-
-  const prevYearFullExpenses = {
-    totalPayroll: sumAccountPrefixes(prevAccountSums, payrollPfx) + (prevPayrollLedger.total > 0 ? prevPayrollLedger.total : 0),
-    totalDirectCosts: sumAccountPrefixes(prevAccountSums, cogsPfx),
-    totalExternalCosts: sumAccountPrefixes(prevAccountSums, externalPfx),
-  }
-
-  // Override fiscal summary with exact account-based values for N-1 full year
-  const exactPrevFullCOGS = prevYearFullExpenses.totalDirectCosts
-  const exactPrevFullRevenue = prevInvoices.reduce((s, inv) => s + (parseFloat(inv.currency_amount_before_tax) || 0), 0)
-  fiscal.prevFullRevenue = exactPrevFullRevenue
-  fiscal.prevFullDirectCosts = exactPrevFullCOGS
-  fiscal.prevFullGrossMargin = exactPrevFullRevenue - exactPrevFullCOGS
-  fiscal.prevFullGrossMarginPct = exactPrevFullRevenue > 0 ? (fiscal.prevFullGrossMargin / exactPrevFullRevenue) * 100 : 0
-  fiscal.prevFullTheoreticalRevenue = exactPrevFullRevenue
-  fiscal.prevFullTheoreticalGrossMargin = fiscal.prevFullGrossMargin
-
-  const prevPayroll = prevPayrollLedger.total > 0 ? prevPayrollLedger.total : 0
-
-  const prevYearInvoiceCount = prevInvoices.length
 
   return NextResponse.json({
+    current: currentPnL,
+    prevYtd: prevPnL,
+    prevFull: prevFullPnL,
     monthly,
-    fiscal,
+    prevMonthly,
     runRate,
-    expenses,
-    cashFlow,
-    health,
-    unpaidInvoices,
     pipeline,
-    pipelineGrid,
     settings,
-    expenseCoverage,
-    cogsDetail,
-    payrollDetail,
-    prevYearInvoiceCount,
-    prevPayroll,
-    prevYearFullExpenses,
-    pennylaneError,
   })
 }

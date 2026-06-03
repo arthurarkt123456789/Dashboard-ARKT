@@ -1,12 +1,9 @@
-import { PLCustomerInvoice, PLSupplierInvoice, extractClientName } from '@/types'
-import { prisma } from './prisma'
-
 const BASE_URL = 'https://app.pennylane.com/api/external/v2'
 
-// Categories are cached indefinitely (they don't change once set in Pennylane)
+// --- In-memory cache ---
 const cache = new Map<string, { data: unknown; expiresAt: number }>()
-const CACHE_TTL_MS = 15 * 60 * 1000
-const CATEGORY_CACHE_TTL_MS = 60 * 60 * 1000 // 1 hour for categories
+const CACHE_TTL_MS = 15 * 60 * 1000       // 15 min (invoices, account sums)
+const LEDGER_TTL_MS = 60 * 60 * 1000       // 1 h (individual ledger entries)
 
 function getFromCache<T>(key: string): T | null {
   const entry = cache.get(key)
@@ -19,6 +16,7 @@ function setInCache(key: string, data: unknown, ttl = CACHE_TTL_MS) {
   cache.set(key, { data, expiresAt: Date.now() + ttl })
 }
 
+// --- Low-level fetch (with rate-limit retry) ---
 async function plFetch<T>(path: string, params: Record<string, string> = {}): Promise<T> {
   const apiKey = process.env.PENNYLANE_API_KEY
   if (!apiKey) throw new Error('PENNYLANE_API_KEY not configured')
@@ -28,9 +26,6 @@ async function plFetch<T>(path: string, params: Record<string, string> = {}): Pr
     .join('&')
   const url = `${BASE_URL}${path}${qs ? '?' + qs : ''}`
 
-  const cached = getFromCache<T>(url)
-  if (cached) return cached
-
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     next: { revalidate: 0 },
@@ -38,208 +33,66 @@ async function plFetch<T>(path: string, params: Record<string, string> = {}): Pr
 
   if (!res.ok) {
     if (res.status === 429) {
-      const retryAfter = parseInt(res.headers.get('retry-after') ?? '5') * 1000
-      await new Promise((r) => setTimeout(r, retryAfter))
+      const wait = parseInt(res.headers.get('retry-after') ?? '5') * 1000
+      await new Promise((r) => setTimeout(r, wait))
       return plFetch(path, params)
     }
     throw new Error(`Pennylane API error ${res.status}: ${await res.text()}`)
   }
 
-  const data = await res.json()
-  setInCache(url, data)
-  return data as T
+  return res.json() as Promise<T>
 }
 
-async function paginateAll<T>(path: string, baseParams: Record<string, string> = {}): Promise<T[]> {
-  const results: T[] = []
-  let cursor: string | undefined
-  do {
-    const params: Record<string, string> = { ...baseParams, limit: '100' }
-    if (cursor) params.cursor = cursor
-    const response = await plFetch<{ items?: T[]; has_more: boolean; next_cursor?: string }>(path, params)
-    const items = (response as Record<string, unknown>).items as T[] ?? []
-    results.push(...items)
-    cursor = response.has_more && response.next_cursor ? response.next_cursor : undefined
-  } while (cursor)
-  return results
-}
-
-// --- Ledger entry types ---
-
-export interface PLLedgerLine {
+// --- Customer invoice type ---
+export interface Invoice {
   id: number
+  date: string        // YYYY-MM-DD
+  amountHT: number
+  paid: boolean
+  remainingHT: number
+  label: string
+  deadline: string
+}
+
+// --- Ledger entry line type (internal) ---
+interface LedgerLine {
   debit: string
   credit: string
   ledger_account: { number: string }
 }
 
-export interface PLLedgerEntry {
-  id: number
-  ledger_entry_lines: PLLedgerLine[]
+interface LedgerEntryDetail {
+  ledger_entry_lines: LedgerLine[]
 }
 
-// Extract the expense account code (6xx debit lines, exclude 44x TVA)
-export function extractAccountCode(lines: PLLedgerLine[]): string | null {
-  const line = lines.find(
-    (l) => parseFloat(l.debit) > 0 && l.ledger_account.number.startsWith('6')
-  )
-  return line?.ledger_account.number ?? null
-}
-
-async function fetchLedgerEntry(invoiceId: number): Promise<PLLedgerEntry> {
-  const cacheKey = `ledger_${invoiceId}`
-  const cached = getFromCache<PLLedgerEntry>(cacheKey)
+// --- Fetch individual ledger entry (cached 1h) ---
+async function fetchLedgerEntryDetail(id: number): Promise<LedgerEntryDetail> {
+  const key = `le_${id}`
+  const cached = getFromCache<LedgerEntryDetail>(key)
   if (cached) return cached
 
-  const entry = await plFetch<PLLedgerEntry>(`/ledger_entries/${invoiceId}`)
-  setInCache(cacheKey, entry, CATEGORY_CACHE_TTL_MS)
+  const data = await plFetch<{ ledger_entry: LedgerEntryDetail }>(`/ledger_entries/${id}`)
+  // Pennylane v2 wraps the entry under a key
+  const entry = (data as Record<string, unknown>).ledger_entry as LedgerEntryDetail | undefined ?? data as unknown as LedgerEntryDetail
+  setInCache(key, entry, LEDGER_TTL_MS)
   return entry
 }
 
-// Fetch ledger entries using DB as persistent cache (survives process restarts)
-export async function fetchLedgerEntries(
-  invoices: PLSupplierInvoice[]
-): Promise<Map<number, string | null>> {
-  const CONCURRENCY = 8
-  const result = new Map<number, string | null>()
+// --- Public: get all customer invoices (15 min cache) ---
+export async function getAllCustomerInvoices(): Promise<Invoice[]> {
+  const cacheKey = 'all_customer_invoices'
+  const cached = getFromCache<Invoice[]>(cacheKey)
+  if (cached) return cached
 
-  // All invoices (we'll try to get codes for all, fall back gracefully)
-  const allIds = invoices.map((inv) => BigInt(inv.id))
-
-  // 1. Load all cached account codes from DB
-  const cachedRows = await prisma.ledgerEntryCache.findMany({
-    where: { invoiceId: { in: allIds } },
-  }).catch(() => [])
-
-  const dbCache = new Map<number, string | null>()
-  for (const row of cachedRows) dbCache.set(Number(row.invoiceId), row.accountCode)
-
-  // 2. Populate result from DB cache
-  for (const inv of invoices) {
-    if (dbCache.has(inv.id)) result.set(inv.id, dbCache.get(inv.id)!)
-  }
-
-  // 3. Fetch from API for complete/entry invoices not yet in DB cache
-  const toFetch = invoices.filter(
-    (inv) =>
-      !dbCache.has(inv.id) &&
-      (inv.accounting_status === 'complete' || inv.accounting_status === 'entry') &&
-      getFromCache(`ledger_${inv.id}`) === null
-  )
-
-  if (toFetch.length > 0) {
-    const newEntries: { invoiceId: bigint; accountCode: string | null }[] = []
-
-    for (let i = 0; i < toFetch.length; i += CONCURRENCY) {
-      const batch = toFetch.slice(i, i + CONCURRENCY)
-      const results = await Promise.allSettled(
-        batch.map((inv) =>
-          fetchLedgerEntry(inv.id).then((e) => ({ id: inv.id, code: extractAccountCode(e.ledger_entry_lines) }))
-        )
-      )
-      for (const r of results) {
-        if (r.status === 'fulfilled') {
-          result.set(r.value.id, r.value.code)
-          newEntries.push({ invoiceId: BigInt(r.value.id), accountCode: r.value.code })
-        }
-      }
-    }
-
-    if (newEntries.length > 0) {
-      await Promise.allSettled(
-        newEntries.map((e) =>
-          prisma.ledgerEntryCache.upsert({
-            where: { invoiceId: e.invoiceId },
-            update: { accountCode: e.accountCode, fetchedAt: new Date() },
-            create: { invoiceId: e.invoiceId, accountCode: e.accountCode },
-          })
-        )
-      )
-    }
-  }
-
-  // 4. Add in-memory cached entries
-  for (const inv of invoices) {
-    if (!result.has(inv.id)) {
-      const cached = getFromCache<PLLedgerEntry>(`ledger_${inv.id}`)
-      if (cached) result.set(inv.id, extractAccountCode(cached.ledger_entry_lines))
-    }
-  }
-
-  // 5. SUPPLIER REPUTATION FALLBACK: for uncategorized invoices, inherit the most common
-  //    account code seen for the same supplier name in the DB cache.
-  //    This handles validation_needed invoices from known suppliers (e.g. BTR Renovation always = 604).
-  const uncategorized = invoices.filter((inv) => !result.has(inv.id) || result.get(inv.id) === null)
-  if (uncategorized.length > 0) {
-    // Build supplier → most common code map from ALL cached entries for ALL invoices
-    const allCached = await prisma.ledgerEntryCache.findMany({
-      where: { accountCode: { not: null } },
-      select: { invoiceId: true, accountCode: true },
-    }).catch(() => [])
-
-    // We need to match invoices to suppliers. Build invoiceId → supplierName from our invoices array
-    const supplierByInvoiceId = new Map<number, string>()
-    for (const inv of invoices) {
-      supplierByInvoiceId.set(inv.id, extractClientName(inv.label))
-    }
-
-    // Build supplier → [codes] map using ONLY invoices we know about
-    const supplierCodes = new Map<string, Map<string, number>>()
-    for (const row of allCached) {
-      const invId = Number(row.invoiceId)
-      const supplierName = supplierByInvoiceId.get(invId)
-      if (!supplierName || !row.accountCode) continue
-      if (!supplierCodes.has(supplierName)) supplierCodes.set(supplierName, new Map())
-      const codes = supplierCodes.get(supplierName)!
-      codes.set(row.accountCode, (codes.get(row.accountCode) ?? 0) + 1)
-    }
-
-    // For each uncategorized invoice, use supplier's most common code
-    for (const inv of uncategorized) {
-      const supplierName = extractClientName(inv.label)
-      const codes = supplierCodes.get(supplierName)
-      if (!codes || codes.size === 0) continue
-      // Pick the code with highest frequency
-      let bestCode = ''
-      let bestCount = 0
-      for (const [code, count] of Array.from(codes.entries())) {
-        if (count > bestCount) { bestCode = code; bestCount = count }
-      }
-      if (bestCode) result.set(inv.id, bestCode)
-    }
-  }
-
-  return result
-}
-
-export async function fetchCustomerInvoices(fromDate: string, toDate: string): Promise<PLCustomerInvoice[]> {
-  const cacheKey = 'customer_invoices_all'
-  let all = getFromCache<PLCustomerInvoice[]>(cacheKey)
-  if (!all) {
-    all = await paginateAll<PLCustomerInvoice>('/customer_invoices', { sort: '-date' })
-    setInCache(cacheKey, all)
-  }
-  return all.filter((inv) => inv.date >= fromDate && inv.date <= toDate)
-}
-
-export async function fetchSupplierInvoices(fromDate: string, toDate: string): Promise<PLSupplierInvoice[]> {
-  const cacheKey = 'supplier_invoices_all'
-  let all = getFromCache<PLSupplierInvoice[]>(cacheKey)
-  if (!all) {
-    all = await paginateAll<PLSupplierInvoice>('/supplier_invoices', { sort: '-date' })
-    setInCache(cacheKey, all)
-  }
-  return all.filter((inv) => inv.date >= fromDate && inv.date <= toDate)
-}
-
-// Fetch payroll amounts from ledger entries (OD journal, labels contain salary keywords)
-// Returns monthly map YYYY-MM → total gross payroll (641 + 645 debit)
-export async function fetchPayrollFromLedger(
-  fromDate: string,
-  toDate: string
-): Promise<{ monthly: Map<string, number>; total: number }> {
-  const SALARY_KEYWORDS = ['salaire', 'appointement', 'paie', 'charges sociales', 'salaires']
-  const payrollEntries: { id: number; date: string }[] = []
+  const raw: {
+    id: number
+    date: string
+    currency_amount_before_tax: string
+    paid: boolean
+    remaining_amount_without_tax: string
+    label: string
+    deadline: string
+  }[] = []
 
   let cursor: string | undefined
   let pages = 0
@@ -247,76 +100,43 @@ export async function fetchPayrollFromLedger(
     const params: Record<string, string> = { sort: '-date', limit: '100' }
     if (cursor) params.cursor = cursor
     const res = await plFetch<{
-      items: { id: number; date: string; label: string; status: string }[]
+      items?: typeof raw
       has_more: boolean
       next_cursor?: string
-    }>('/ledger_entries', params)
+    }>('/customer_invoices', params)
 
-    let hitPastRange = false
-    for (const entry of res.items ?? []) {
-      if (entry.date > toDate) continue
-      if (entry.date < fromDate) { hitPastRange = true; break }
-      // Don't filter by status — OD payroll entries have null status
-      if (entry.status === 'validation_needed') continue
-      const lower = (entry.label ?? '').toLowerCase()
-      if (SALARY_KEYWORDS.some((k) => lower.includes(k))) {
-        payrollEntries.push({ id: entry.id, date: entry.date })
-      }
-    }
-
-    cursor = !hitPastRange && res.has_more && res.next_cursor ? res.next_cursor : undefined
+    const items = (res.items ?? []) as typeof raw
+    raw.push(...items)
+    cursor = res.has_more && res.next_cursor ? res.next_cursor : undefined
     pages++
-    if (pages > 50) break  // 5000 entries = ~3-4 years of history, enough for any date range
+    if (pages > 100) break
   } while (cursor)
 
-  // Fetch ledger lines for each payroll entry (batched)
-  const monthly = new Map<string, number>()
-  let total = 0
-  const CONCURRENCY = 8
+  const invoices: Invoice[] = raw.map((r) => ({
+    id: r.id,
+    date: r.date,
+    amountHT: parseFloat(r.currency_amount_before_tax) || 0,
+    paid: r.paid === true,
+    remainingHT: parseFloat(r.remaining_amount_without_tax) || 0,
+    label: r.label ?? '',
+    deadline: r.deadline ?? '',
+  }))
 
-  for (let i = 0; i < payrollEntries.length; i += CONCURRENCY) {
-    const batch = payrollEntries.slice(i, i + CONCURRENCY)
-    const results = await Promise.allSettled(
-      batch.map((e) =>
-        fetchLedgerEntry(e.id).then((entry) => ({
-          date: e.date,
-          amount: (entry.ledger_entry_lines ?? [])
-            .filter(
-              (l) =>
-                parseFloat(l.debit) > 0 &&
-                (l.ledger_account.number.startsWith('641') ||
-                  l.ledger_account.number.startsWith('642') ||
-                  l.ledger_account.number.startsWith('644') ||
-                  l.ledger_account.number.startsWith('645') ||
-                  l.ledger_account.number.startsWith('646'))
-            )
-            .reduce((s, l) => s + parseFloat(l.debit), 0),
-        }))
-      )
-    )
-    for (const r of results) {
-      if (r.status === 'fulfilled' && r.value.amount > 0) {
-        const monthKey = r.value.date.slice(0, 7)
-        monthly.set(monthKey, (monthly.get(monthKey) ?? 0) + r.value.amount)
-        total += r.value.amount
-      }
-    }
-  }
-
-  return { monthly, total }
+  setInCache(cacheKey, invoices)
+  return invoices
 }
 
-// Scan ALL ledger entries for a period and sum 6xx debit lines by account prefix.
-// Returns Map<YYYY-MM, Map<3-digit-prefix, amount>> — exact same data Pennylane uses for its P&L.
-export async function fetchPnLAccountSums(
+// --- Public: get expense account sums for a period ---
+// Returns Map<YYYY-MM, Map<3-digit-account-prefix, total-debit>>
+export async function getExpenseAccountSums(
   fromDate: string,
   toDate: string
 ): Promise<Map<string, Map<string, number>>> {
-  const cacheKey = `pnl_${fromDate}_${toDate}`
+  const cacheKey = `expense_sums_${fromDate}_${toDate}`
   const cached = getFromCache<Map<string, Map<string, number>>>(cacheKey)
   if (cached) return cached
 
-  // Step 1: collect all entry IDs in the period
+  // Step 1: page through ledger entries, collect IDs in range
   const entryIds: { id: number; date: string }[] = []
   let cursor: string | undefined
   let pages = 0
@@ -326,32 +146,37 @@ export async function fetchPnLAccountSums(
     if (cursor) params.cursor = cursor
 
     const res = await plFetch<{
-      items: { id: number; date: string; status?: string }[]
+      items: { id: number; date: string; label?: string; status?: string }[]
       has_more: boolean
       next_cursor?: string
     }>('/ledger_entries', params)
 
-    let pastStart = false
+    let hitPastRange = false
     for (const entry of res.items ?? []) {
       if (entry.date > toDate) continue
-      if (entry.date < fromDate) { pastStart = true; break }
-      if (entry.status === 'validation_needed') continue // skip unaccounted
+      if (entry.date < fromDate) { hitPastRange = true; break }
+      if (entry.status === 'validation_needed') continue  // not yet accounted
       entryIds.push({ id: entry.id, date: entry.date })
     }
 
-    cursor = !pastStart && res.has_more && res.next_cursor ? res.next_cursor : undefined
+    cursor = !hitPastRange && res.has_more && res.next_cursor ? res.next_cursor : undefined
     pages++
-    if (pages > 60) break // 6000 entries = ~4 years of history
+    if (pages > 60) break
   } while (cursor)
 
-  // Step 2: fetch ledger lines for all entries (in-memory cache)
+  // Step 2: fetch detail lines (concurrency 8, in-memory cache 1h)
   const monthly = new Map<string, Map<string, number>>()
   const CONCURRENCY = 8
 
   for (let i = 0; i < entryIds.length; i += CONCURRENCY) {
     const batch = entryIds.slice(i, i + CONCURRENCY)
     const results = await Promise.allSettled(
-      batch.map((e) => fetchLedgerEntry(e.id).then((entry) => ({ date: e.date, lines: entry.ledger_entry_lines ?? [] })))
+      batch.map((e) =>
+        fetchLedgerEntryDetail(e.id).then((detail) => ({
+          date: e.date,
+          lines: detail.ledger_entry_lines ?? [],
+        }))
+      )
     )
 
     for (const r of results) {
@@ -363,36 +188,16 @@ export async function fetchPnLAccountSums(
       for (const line of r.value.lines) {
         const debit = parseFloat(line.debit) || 0
         if (debit <= 0) continue
-        const code = line.ledger_account.number
-        if (!code.startsWith('6')) continue // only expense accounts
+        const code = line.ledger_account?.number ?? ''
+        if (!code.startsWith('6')) continue  // only expense accounts
         const prefix3 = code.slice(0, 3)
         monthSums.set(prefix3, (monthSums.get(prefix3) ?? 0) + debit)
       }
     }
   }
 
-  setInCache(cacheKey, monthly, CACHE_TTL_MS)
+  setInCache(cacheKey, monthly)
   return monthly
-}
-
-// Sum a monthly map across a date range for given account prefixes
-export function sumAccountPrefixes(
-  monthly: Map<string, Map<string, number>>,
-  prefixes: string[],
-  fromMonth?: string,
-  toMonth?: string
-): number {
-  let total = 0
-  for (const [month, sums] of Array.from(monthly.entries())) {
-    if (fromMonth && month < fromMonth) continue
-    if (toMonth && month > toMonth) continue
-    for (const [prefix, amount] of Array.from(sums.entries())) {
-      if (prefixes.some((p) => prefix.startsWith(p) || p.startsWith(prefix))) {
-        total += amount
-      }
-    }
-  }
-  return total
 }
 
 export function clearCache() {

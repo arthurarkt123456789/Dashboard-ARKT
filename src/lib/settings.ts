@@ -8,10 +8,15 @@ export async function getSettings(): Promise<AppSettings> {
     return {
       payrollMonthly: parseFloat(map.payrollMonthly ?? '0') || 0,
       currentBankBalance: parseFloat(map.currentBankBalance ?? '0') || 0,
-      bartPucciNames: map.bartPucciNames ? JSON.parse(map.bartPucciNames) : DEFAULT_SETTINGS.bartPucciNames,
-      cogsAccountPrefixes: map.cogsAccountPrefixes ? JSON.parse(map.cogsAccountPrefixes) : DEFAULT_SETTINGS.cogsAccountPrefixes,
-      payrollAccountPrefixes: map.payrollAccountPrefixes ? JSON.parse(map.payrollAccountPrefixes) : DEFAULT_SETTINGS.payrollAccountPrefixes,
-      treasuryItems: map.treasuryItems ? JSON.parse(map.treasuryItems) : DEFAULT_SETTINGS.treasuryItems,
+      bartPucciNames: map.bartPucciNames
+        ? JSON.parse(map.bartPucciNames)
+        : DEFAULT_SETTINGS.bartPucciNames,
+      cogsAccountPrefixes: map.cogsAccountPrefixes
+        ? JSON.parse(map.cogsAccountPrefixes)
+        : DEFAULT_SETTINGS.cogsAccountPrefixes,
+      payrollAccountPrefixes: map.payrollAccountPrefixes
+        ? JSON.parse(map.payrollAccountPrefixes)
+        : DEFAULT_SETTINGS.payrollAccountPrefixes,
     }
   } catch {
     return DEFAULT_SETTINGS
