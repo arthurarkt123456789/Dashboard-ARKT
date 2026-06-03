@@ -123,6 +123,9 @@ export function computeMonthlyRevenue(
     const prevMonthKey = formatMonth(addMonths(monthStart, -12))
     const prevInv = prevInvoices.filter((inv) => invDate(inv).startsWith(prevMonthKey))
     const prevRevenue = prevInv.reduce((s, inv) => s + amountHT(inv), 0)
+    const prevBartPucci = prevInv
+      .filter((inv) => isBartPucci(clientName(inv), settings.bartPucciNames))
+      .reduce((s, inv) => s + amountHT(inv), 0)
     const prevDirectCosts = prevExpenses
       .filter((e) => invDate(e).startsWith(prevMonthKey) && isDirectCost(supplierLabel(e), settings.directCostKeywords))
       .reduce((s, e) => s + amountHT(e), 0)
@@ -140,18 +143,20 @@ export function computeMonthlyRevenue(
       cumBartPucci: 0,
       cumGrossMargin: 0,
       prevYearRevenue: prevRevenue,
+      prevYearBartPucci: prevBartPucci,
       prevYearGrossMargin: prevGrossMargin,
       prevYearCumRevenue: 0,
+      prevYearCumBartPucci: 0,
       prevYearCumGrossMargin: 0,
     })
   }
 
-  let cumRev = 0, cumBP = 0, cumGM = 0, cumPrevRev = 0, cumPrevGM = 0
+  let cumRev = 0, cumBP = 0, cumGM = 0, cumPrevRev = 0, cumPrevBP = 0, cumPrevGM = 0
   for (const m of months) {
     cumRev += m.revenue; cumBP += m.bartPucci; cumGM += m.grossMargin
-    cumPrevRev += m.prevYearRevenue; cumPrevGM += m.prevYearGrossMargin
+    cumPrevRev += m.prevYearRevenue; cumPrevBP += m.prevYearBartPucci; cumPrevGM += m.prevYearGrossMargin
     m.cumRevenue = cumRev; m.cumBartPucci = cumBP; m.cumGrossMargin = cumGM
-    m.prevYearCumRevenue = cumPrevRev; m.prevYearCumGrossMargin = cumPrevGM
+    m.prevYearCumRevenue = cumPrevRev; m.prevYearCumBartPucci = cumPrevBP; m.prevYearCumGrossMargin = cumPrevGM
   }
 
   return months
@@ -159,7 +164,11 @@ export function computeMonthlyRevenue(
 
 // --- Fiscal year summary ---
 
-export function computeFiscalSummary(monthly: MonthlyRevenue[], now: Date): FiscalYearSummary {
+export function computeFiscalSummary(
+  monthly: MonthlyRevenue[],
+  now: Date,
+  invoicedUnpaid: number = 0
+): FiscalYearSummary {
   const fy = getFiscalYear(now)
   const ytd = monthly.filter((m) => m.month <= formatMonth(now))
 
@@ -168,7 +177,11 @@ export function computeFiscalSummary(monthly: MonthlyRevenue[], now: Date): Fisc
   const totalDirectCosts = ytd.reduce((s, m) => s + m.directCosts, 0)
   const totalGrossMargin = ytd.reduce((s, m) => s + m.grossMargin, 0)
   const prevYearRevenue = ytd.reduce((s, m) => s + m.prevYearRevenue, 0)
+  const prevYearBartPucci = ytd.reduce((s, m) => s + m.prevYearBartPucci, 0)
   const prevYearGrossMargin = ytd.reduce((s, m) => s + m.prevYearGrossMargin, 0)
+
+  const theoreticalRevenue = totalRevenue + invoicedUnpaid
+  const theoreticalGrossMargin = theoreticalRevenue - totalDirectCosts
 
   return {
     year: fy.label,
@@ -180,10 +193,18 @@ export function computeFiscalSummary(monthly: MonthlyRevenue[], now: Date): Fisc
     totalDirectCosts,
     totalGrossMargin,
     grossMarginPct: totalRevenue > 0 ? (totalGrossMargin / totalRevenue) * 100 : 0,
+    theoreticalRevenue,
+    theoreticalGrossMargin,
+    theoreticalGrossMarginPct: theoreticalRevenue > 0 ? (theoreticalGrossMargin / theoreticalRevenue) * 100 : 0,
     prevYearRevenue,
+    prevYearBartPucci,
+    prevYearBartPucciPct: prevYearRevenue > 0 ? (prevYearBartPucci / prevYearRevenue) * 100 : 0,
     prevYearGrossMargin,
     revenueGrowthPct: prevYearRevenue > 0 ? ((totalRevenue - prevYearRevenue) / prevYearRevenue) * 100 : 0,
     marginGrowthPct: prevYearGrossMargin > 0 ? ((totalGrossMargin - prevYearGrossMargin) / prevYearGrossMargin) * 100 : 0,
+    bartPucciGrowthPct: prevYearRevenue > 0
+      ? ((totalBartPucci / Math.max(totalRevenue, 1)) - (prevYearBartPucci / Math.max(prevYearRevenue, 1))) * 100
+      : 0,
   }
 }
 

@@ -83,31 +83,47 @@ export default function RevenueChart({
 
       <div className="kpi-row">
         <KPICard
-          label="CA YTD"
+          label="CA encaissé YTD"
           value={fmt(fiscal.totalRevenue)}
           trend={fiscal.revenueGrowthPct}
           sub={`vs ${fmt(fiscal.prevYearRevenue)} N-1`}
           size="lg"
         />
         <KPICard
-          label="Marge brute YTD"
+          label="CA théorique (+ facturé)"
+          value={fmt(fiscal.theoreticalRevenue)}
+          sub={`dont ${fmt(fiscal.theoreticalRevenue - fiscal.totalRevenue)} non encaissé`}
+          color="orange"
+          size="lg"
+        />
+        <KPICard
+          label="Marge brute encaissée"
           value={fmt(fiscal.totalGrossMargin)}
           sub={`${fiscal.grossMarginPct.toFixed(1)}%`}
           trend={fiscal.marginGrowthPct}
           color={fiscal.grossMarginPct > 50 ? 'green' : fiscal.grossMarginPct > 25 ? 'default' : 'red'}
-          size="lg"
+          size="md"
         />
         <KPICard
-          label="Bart & Pucci"
+          label="Marge brute théorique"
+          value={fmt(fiscal.theoreticalGrossMargin)}
+          sub={`${fiscal.theoreticalGrossMarginPct.toFixed(1)}%`}
+          color={fiscal.theoreticalGrossMarginPct > 50 ? 'green' : 'default'}
+          size="md"
+        />
+        <KPICard
+          label="Bart & Pucci N"
           value={`${fiscal.bartPucciPct.toFixed(1)}%`}
           sub={fmt(fiscal.totalBartPucci)}
           color="purple"
-          size="md"
+          size="sm"
         />
         <KPICard
-          label="Charges directes"
-          value={fmt(fiscal.totalDirectCosts)}
-          size="md"
+          label="Bart & Pucci N-1"
+          value={`${fiscal.prevYearBartPucciPct.toFixed(1)}%`}
+          sub={fmt(fiscal.prevYearBartPucci)}
+          color={fiscal.bartPucciPct < fiscal.prevYearBartPucciPct ? 'green' : 'purple'}
+          size="sm"
         />
       </div>
 

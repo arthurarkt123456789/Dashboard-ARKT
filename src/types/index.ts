@@ -52,8 +52,10 @@ export interface MonthlyRevenue {
   cumBartPucci: number
   cumGrossMargin: number
   prevYearRevenue: number
+  prevYearBartPucci: number
   prevYearGrossMargin: number
   prevYearCumRevenue: number
+  prevYearCumBartPucci: number
   prevYearCumGrossMargin: number
 }
 
@@ -67,10 +69,16 @@ export interface FiscalYearSummary {
   totalDirectCosts: number
   totalGrossMargin: number
   grossMarginPct: number
+  theoreticalRevenue: number
+  theoreticalGrossMargin: number
+  theoreticalGrossMarginPct: number
   prevYearRevenue: number
+  prevYearBartPucci: number
+  prevYearBartPucciPct: number
   prevYearGrossMargin: number
   revenueGrowthPct: number
   marginGrowthPct: number
+  bartPucciGrowthPct: number
 }
 
 export interface RunRateProjection {

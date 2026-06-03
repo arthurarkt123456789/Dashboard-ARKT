@@ -84,7 +84,10 @@ export async function GET() {
   }))
 
   const monthly = computeMonthlyRevenue(currentInvoices, prevInvoices, currentExpenses, prevExpenses, settings, now)
-  const fiscal = computeFiscalSummary(monthly, now)
+  const invoicedUnpaid = currentInvoices
+    .filter((inv) => !inv.paid && parseFloat(inv.remaining_amount_without_tax) > 0)
+    .reduce((s, inv) => s + (parseFloat(inv.remaining_amount_without_tax) || 0), 0)
+  const fiscal = computeFiscalSummary(monthly, now, invoicedUnpaid)
   const runRate = computeRunRate(currentInvoices, pipeline, settings, now)
   const expenses = computeExpenseSummary(currentExpenses, settings, now)
   const cashFlow = computeCashFlow(currentInvoices, currentExpenses, pipeline, settings, now)
