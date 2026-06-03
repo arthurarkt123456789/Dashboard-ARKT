@@ -165,6 +165,7 @@ export default function DashboardPage() {
             monthly={data.monthly}
             pipelineGrid={data.pipelineGrid}
             settings={data.settings}
+            onRefresh={load}
           />
 
           <SettingsPanel settings={data.settings} coverage={data.expenseCoverage} onSave={load} />

@@ -40,10 +40,12 @@ export default function TreasurySection({
   monthly,
   pipelineGrid,
   settings,
+  onRefresh,
 }: {
   monthly: MonthlyRevenue[]
   pipelineGrid: PipelineGrid
   settings: AppSettings
+  onRefresh?: () => void
 }) {
   const nowYM = getCurrentYearMonth()
   const today = new Date().getDate()
@@ -180,7 +182,14 @@ export default function TreasurySection({
 
   return (
     <section className="section">
-      <h2 className="section-title">Plan de trésorerie</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+        <h2 className="section-title" style={{ margin: 0 }}>Plan de trésorerie</h2>
+        {onRefresh && (
+          <button className="btn btn-ghost" onClick={onRefresh} style={{ fontSize: '0.78rem' }}>
+            ↻ Actualiser (pipeline)
+          </button>
+        )}
+      </div>
       <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 16 }}>
         Salaires & charges externes : données Pennylane pour les mois passés, moyenne des mois passés pour les prévisions.
         Autres postes (emprunt, voiture, loyer) : configurer dans ⚙ Paramètres.
