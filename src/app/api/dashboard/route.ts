@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import { isAuthenticated } from '@/lib/auth'
-import { fetchCustomerInvoices, fetchSupplierInvoices, fetchAllSupplierCategories } from '@/lib/pennylane'
+import { fetchCustomerInvoices, fetchSupplierInvoices, fetchAllSupplierCategories, PLInvoiceCategory } from '@/lib/pennylane'
 import { getSettings } from '@/lib/settings'
 import { prisma } from '@/lib/prisma'
 import {
@@ -83,9 +83,14 @@ export async function GET() {
     updatedAt: p.updatedAt.toISOString(),
   }))
 
-  // Fetch Pennylane accounting categories for all supplier invoices
-  const allExpenses = [...currentExpenses, ...prevExpenses]
-  const categoryMap = await fetchAllSupplierCategories(allExpenses).catch(() => new Map())
+  // Fetch categories with a hard 6s timeout — current FY only, skip N-1 on first load
+  const timeout = new Promise<Map<number, PLInvoiceCategory[]>>((resolve) =>
+    setTimeout(() => resolve(new Map()), 6000)
+  )
+  const categoryMap = await Promise.race([
+    fetchAllSupplierCategories(currentExpenses),
+    timeout,
+  ]).catch(() => new Map())
 
   const monthly = computeMonthlyRevenue(currentInvoices, prevInvoices, currentExpenses, prevExpenses, settings, now, categoryMap)
   const invoicedUnpaid = currentInvoices

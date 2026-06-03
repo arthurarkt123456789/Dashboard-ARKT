@@ -94,7 +94,7 @@ async function fetchInvoiceCategories(invoiceId: number): Promise<PLInvoiceCateg
 export async function fetchAllSupplierCategories(
   invoices: PLSupplierInvoice[]
 ): Promise<Map<number, PLInvoiceCategory[]>> {
-  const CONCURRENCY = 8
+  const CONCURRENCY = 5
   const result = new Map<number, PLInvoiceCategory[]>()
 
   // Only fetch for invoices not already in cache
@@ -103,12 +103,13 @@ export async function fetchAllSupplierCategories(
   // Process with concurrency limit
   for (let i = 0; i < toFetch.length; i += CONCURRENCY) {
     const batch = toFetch.slice(i, i + CONCURRENCY)
-    const batchResults = await Promise.all(
+    const batchResults = await Promise.allSettled(
       batch.map((inv) => fetchInvoiceCategories(inv.id).then((cats) => ({ id: inv.id, cats })))
     )
-    for (const { id, cats } of batchResults) result.set(id, cats)
-    // Small delay between batches to stay within rate limits
-    if (i + CONCURRENCY < toFetch.length) await new Promise((r) => setTimeout(r, 300))
+    for (const r of batchResults) {
+      if (r.status === 'fulfilled') result.set(r.value.id, r.value.cats)
+    }
+    if (i + CONCURRENCY < toFetch.length) await new Promise((r) => setTimeout(r, 500))
   }
 
   // Also include already-cached ones
