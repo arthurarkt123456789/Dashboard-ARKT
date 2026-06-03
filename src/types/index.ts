@@ -1,43 +1,48 @@
-// --- Pennylane raw types ---
+// --- Pennylane raw types (v2 actual format) ---
 
 export interface PLCustomerInvoice {
   id: number
   invoice_number: string
-  issue_date: string
+  label: string
+  date: string           // YYYY-MM-DD
   deadline: string
-  customer_name: string
-  amount_eur: number
-  amount_eur_excl_taxes: number
-  is_paid: boolean
-  outstanding_balance: number
+  currency_amount_before_tax: string  // HT as string
+  currency_amount: string             // TTC as string
+  paid: boolean
+  remaining_amount_without_tax: string
   status: string
+  customer: { id: number; url: string }
 }
 
 export interface PLSupplierInvoice {
   id: number
-  issue_date: string
+  invoice_number?: string
+  label: string
+  date: string
   deadline: string
-  supplier_name: string
-  amount_eur: number
-  amount_eur_excl_taxes: number
-  is_paid: boolean
-  label?: string
-  category?: string
+  currency_amount_before_tax: string
+  currency_amount: string
+  paid: boolean
+  remaining_amount_without_tax: string
+  status: string
+  supplier?: { id: number; url: string }
 }
 
-export interface PLInvoiceLine {
-  id: number
-  label: string
-  currency_amount: number
-  currency_tax: number
-  margin?: number
+// Extracts customer name from Pennylane label
+// "Facture REMO FRANCE - F-2026-62 (label généré)" → "REMO FRANCE"
+export function extractClientName(label: string): string {
+  return label
+    .replace(/ \(label généré\)/i, '')
+    .replace(/^(Facture|Avoir) /i, '')
+    .replace(/ - [A-Z0-9-]+$/, '')
+    .trim()
 }
 
 // --- Processed/computed types ---
 
 export interface MonthlyRevenue {
-  month: string // YYYY-MM
-  label: string // "Oct 24"
+  month: string
+  label: string
   revenue: number
   bartPucci: number
   directCosts: number
@@ -53,7 +58,7 @@ export interface MonthlyRevenue {
 }
 
 export interface FiscalYearSummary {
-  year: string // e.g. "2024-2025"
+  year: string
   startDate: string
   endDate: string
   totalRevenue: number
@@ -104,7 +109,7 @@ export interface ExpenseSummary {
 }
 
 export interface CashFlowMonth {
-  month: string // YYYY-MM
+  month: string
   label: string
   isHistorical: boolean
   revenue: number
@@ -140,6 +145,7 @@ export interface DashboardData {
   unpaidInvoices: PLCustomerInvoice[]
   pipeline: PipelineEntry[]
   settings: AppSettings
+  pennylaneError?: string | null
 }
 
 export interface AppSettings {

@@ -69,9 +69,9 @@ async function paginateAll<T>(path: string, baseParams: Record<string, string> =
     }>(path, params)
 
     const items =
+      (response as Record<string, unknown>).items as T[] ??
       (response as Record<string, unknown>).customer_invoices as T[] ??
       (response as Record<string, unknown>).supplier_invoices as T[] ??
-      (response as Record<string, unknown>).invoices as T[] ??
       []
 
     results.push(...items)
@@ -91,7 +91,7 @@ export async function fetchCustomerInvoices(fromDate: string, toDate: string): P
     setInCache(cacheKey, all)
   }
 
-  return all.filter((inv) => inv.issue_date >= fromDate && inv.issue_date <= toDate)
+  return all.filter((inv) => inv.date >= fromDate && inv.date <= toDate)
 }
 
 export async function fetchSupplierInvoices(fromDate: string, toDate: string): Promise<PLSupplierInvoice[]> {
@@ -103,7 +103,7 @@ export async function fetchSupplierInvoices(fromDate: string, toDate: string): P
     setInCache(cacheKey, all)
   }
 
-  return all.filter((inv) => inv.issue_date >= fromDate && inv.issue_date <= toDate)
+  return all.filter((inv) => inv.date >= fromDate && inv.date <= toDate)
 }
 
 export function clearCache() {

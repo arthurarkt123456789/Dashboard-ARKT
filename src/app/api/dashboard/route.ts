@@ -59,7 +59,7 @@ export async function GET() {
     prisma.pipelineEntry.findMany({ orderBy: { expectedDate: 'asc' } }).catch(() => []),
   ])
 
-  const recentInvoices = currentInvoices.filter((inv) => new Date(inv.issue_date) >= addMonths(now, -3))
+  const recentInvoices = currentInvoices.filter((inv) => new Date(inv.date) >= addMonths(now, -3))
   const dupIds = detectDuplicates(
     rawPipeline.map((p) => ({
       id: p.id,
@@ -91,10 +91,10 @@ export async function GET() {
   const health = computeHealthStatus(fiscal, runRate, cashFlow)
 
   const unpaidInvoices = currentInvoices
-    .filter((inv) => !inv.is_paid && inv.outstanding_balance > 0)
+    .filter((inv) => !inv.paid && parseFloat(inv.remaining_amount_without_tax) > 0)
     .sort((a, b) => (a.deadline ?? '').localeCompare(b.deadline ?? ''))
 
-  const prevYearTotal = prevInvoices.reduce((s, inv) => s + inv.amount_eur_excl_taxes, 0)
+  const prevYearTotal = prevInvoices.reduce((s, inv) => s + (parseFloat(inv.currency_amount_before_tax) || 0), 0)
   runRate.prevYearTotal = prevYearTotal
   runRate.variance = runRate.total - prevYearTotal
   runRate.variancePct = prevYearTotal > 0 ? ((runRate.total - prevYearTotal) / prevYearTotal) * 100 : 0
