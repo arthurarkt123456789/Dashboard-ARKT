@@ -228,7 +228,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cogsAccountPrefixes: ['60', '601', '604', '607', '611', '612', '621'],
   payrollAccountPrefixes: ['641', '642', '644', '645', '646', '647', '648'],
   directorChargeSuppliers: ['dmevent', 'enolane', 'amazon'],
-  meuleryChargeSuppliers: ['carrelages lupi', 'little sea'],
+  meuleryChargeSuppliers: [],  // unused by default
   treasuryItems: [
     { name: 'Salaires (hors dirigeant)', monthlyAmount: 0, dayOfMonth: 30 },
     { name: 'Salaire dirigeant', monthlyAmount: 0, dayOfMonth: 30 },

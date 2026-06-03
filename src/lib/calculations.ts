@@ -135,8 +135,11 @@ export function computeMonthlyRevenue(
       classifyExpense(extractClientName(e.label), categoryMap.get(e.id), settings)
 
     const directCosts = monthExp.filter((e) => classify(e) === 'cogs').reduce((s, e) => s + amountHT(e), 0)
-    const payroll = monthExp.filter((e) => classify(e) === 'payroll').reduce((s, e) => s + amountHT(e), 0)
-      + (payrollLedger.get(monthKey) ?? 0)  // add OD journal payroll
+    // OD journal payroll (6411/645x) takes priority — supplier invoice payroll (645x) is a fallback
+    // to avoid double-counting: if OD payroll exists for this month, don't add supplier invoice payroll
+    const odPayroll = payrollLedger.get(monthKey) ?? 0
+    const supplierPayroll = odPayroll > 0 ? 0 : monthExp.filter((e) => classify(e) === 'payroll').reduce((s, e) => s + amountHT(e), 0)
+    const payroll = odPayroll + supplierPayroll
     const externalCosts = monthExp.filter((e) => classify(e) === 'external').reduce((s, e) => s + amountHT(e), 0)
     const directorCharges = monthExp.filter((e) => classify(e) === 'director').reduce((s, e) => s + amountHT(e), 0)
     const meuleryCharges = monthExp.filter((e) => classify(e) === 'meulery').reduce((s, e) => s + amountHT(e), 0)
@@ -158,8 +161,10 @@ export function computeMonthlyRevenue(
 
     const prevDirectCosts = prevMonthExp.filter((e) => classifyPrev(e) === 'cogs').reduce((s, e) => s + amountHT(e), 0)
     const prevGrossMargin = prevRevenue - prevDirectCosts
-    const prevYearPayroll = prevMonthExp.filter((e) => classifyPrev(e) === 'payroll').reduce((s, e) => s + amountHT(e), 0)
-      + (prevPayrollLedger.get(prevMonthKey) ?? 0)  // add prev year OD journal payroll
+    // Same anti-double-counting logic for N-1
+    const prevOdPayroll = prevPayrollLedger.get(prevMonthKey) ?? 0
+    const prevSupplierPayroll = prevOdPayroll > 0 ? 0 : prevMonthExp.filter((e) => classifyPrev(e) === 'payroll').reduce((s, e) => s + amountHT(e), 0)
+    const prevYearPayroll = prevOdPayroll + prevSupplierPayroll
     const prevYearExternalCosts = prevMonthExp.filter((e) => classifyPrev(e) === 'external').reduce((s, e) => s + amountHT(e), 0)
     const prevYearDirectorCharges = prevMonthExp.filter((e) => classifyPrev(e) === 'director').reduce((s, e) => s + amountHT(e), 0)
     const prevYearMeuleryCharges = prevMonthExp.filter((e) => classifyPrev(e) === 'meulery').reduce((s, e) => s + amountHT(e), 0)
