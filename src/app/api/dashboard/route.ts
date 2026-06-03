@@ -94,45 +94,29 @@ export async function GET() {
     entries: rawPipelineGrid.map((e) => ({ clientName: e.clientName, month: e.month, amount: e.amount })),
   }
 
-  // Fetch ledger entries for both current AND prev year expenses (needed for correct N-1 margin)
+  const fyStart = format(getFiscalYear(now).start, 'yyyy-MM-dd')
+  const fyNow = format(now, 'yyyy-MM-dd')
+  const prevFyStart = format(prev.start, 'yyyy-MM-dd')
+  const prevFyEnd = format(prev.end, 'yyyy-MM-dd')
+
+  // Ledger entries: DB-cached (fast after first load), then payroll sequentially to avoid rate limits
   const allExpenses = [...currentExpenses, ...prevExpenses]
-  const categoryMap = await Promise.race([
-    fetchLedgerEntries(allExpenses),
-    new Promise<Map<number, string | null>>((r) => setTimeout(() => r(new Map()), 25000)),
-  ]).catch(() => new Map<number, string | null>())
+  const categoryMap = await fetchLedgerEntries(allExpenses).catch(() => new Map<number, string | null>())
 
   // Split into current and prev category maps
   const currentExpenseIds = new Set(currentExpenses.map((e) => e.id))
   const prevCategoryMap = new Map<number, string | null>()
   const currentCategoryMap = new Map<number, string | null>()
   for (const [id, code] of Array.from(categoryMap.entries())) {
-    if (currentExpenseIds.has(id)) {
-      currentCategoryMap.set(id, code)
-    } else {
-      prevCategoryMap.set(id, code)
-    }
+    if (currentExpenseIds.has(id)) currentCategoryMap.set(id, code)
+    else prevCategoryMap.set(id, code)
   }
 
-  const fyStart = format(getFiscalYear(now).start, 'yyyy-MM-dd')
-  const fyNow = format(now, 'yyyy-MM-dd')
-  const prevFyStart = format(prev.start, 'yyyy-MM-dd')
-  const prevFyEnd = format(prev.end, 'yyyy-MM-dd')
-
-  // Fetch payroll BEFORE computing monthly (payroll needed for correct monthly breakdown)
-  const [payrollLedger, prevPayrollLedger] = await Promise.all([
-    Promise.race([
-      fetchPayrollFromLedger(fyStart, fyNow),
-      new Promise<{ monthly: Map<string, number>; total: number }>((r) =>
-        setTimeout(() => r({ monthly: new Map(), total: 0 }), 15000)
-      ),
-    ]).catch(() => ({ monthly: new Map<string, number>(), total: 0 })),
-    Promise.race([
-      fetchPayrollFromLedger(prevFyStart, prevFyEnd),
-      new Promise<{ monthly: Map<string, number>; total: number }>((r) =>
-        setTimeout(() => r({ monthly: new Map(), total: 0 }), 15000)
-      ),
-    ]).catch(() => ({ monthly: new Map<string, number>(), total: 0 })),
-  ])
+  // Fetch payroll sequentially (not parallel) to avoid rate limits
+  const payrollLedger = await fetchPayrollFromLedger(fyStart, fyNow)
+    .catch(() => ({ monthly: new Map<string, number>(), total: 0 }))
+  const prevPayrollLedger = await fetchPayrollFromLedger(prevFyStart, prevFyEnd)
+    .catch(() => ({ monthly: new Map<string, number>(), total: 0 }))
 
   const monthly = computeMonthlyRevenue(
     currentInvoices, prevInvoices, currentExpenses, prevExpenses,

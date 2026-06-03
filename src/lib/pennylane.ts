@@ -1,4 +1,5 @@
 import { PLCustomerInvoice, PLSupplierInvoice } from '@/types'
+import { prisma } from './prisma'
 
 const BASE_URL = 'https://app.pennylane.com/api/external/v2'
 
@@ -95,39 +96,73 @@ async function fetchLedgerEntry(invoiceId: number): Promise<PLLedgerEntry> {
   return entry
 }
 
-// Fetch ledger entries for all COMPLETE invoices (only those have accounting lines)
+// Fetch ledger entries using DB as persistent cache (survives process restarts)
 export async function fetchLedgerEntries(
   invoices: PLSupplierInvoice[]
 ): Promise<Map<number, string | null>> {
-  const CONCURRENCY = 10  // Pennylane allows 25 req/5s — 10 parallel is safe
+  const CONCURRENCY = 8
   const result = new Map<number, string | null>()
 
-  // Fetch for complete + entry invoices (entry = partially accounted, may have 60x debit line)
-  // Skip validation_needed and archived (no accounting done yet)
-  const toFetch = invoices.filter(
-    (inv) =>
-      (inv.accounting_status === 'complete' || inv.accounting_status === 'entry') &&
-      getFromCache(`ledger_${inv.id}`) === null
+  // Filter to accountable invoices only
+  const accountable = invoices.filter(
+    (inv) => inv.accounting_status === 'complete' || inv.accounting_status === 'entry'
   )
 
-  for (let i = 0; i < toFetch.length; i += CONCURRENCY) {
-    const batch = toFetch.slice(i, i + CONCURRENCY)
-    const results = await Promise.allSettled(
-      batch.map((inv) =>
-        fetchLedgerEntry(inv.id).then((e) => ({ id: inv.id, code: extractAccountCode(e.ledger_entry_lines) }))
-      )
-    )
-    for (const r of results) {
-      if (r.status === 'fulfilled') result.set(r.value.id, r.value.code)
-    }
-    // No delay needed between batches — 10 req at once is well within 25/5s limit
+  // 1. Load all cached account codes from DB in one query
+  const cachedRows = await prisma.ledgerEntryCache.findMany({
+    where: { invoiceId: { in: accountable.map((inv) => BigInt(inv.id)) } },
+  }).catch(() => [])
+
+  const dbCache = new Map<number, string | null>()
+  for (const row of cachedRows) dbCache.set(Number(row.invoiceId), row.accountCode)
+
+  // 2. Populate result from DB cache
+  for (const inv of accountable) {
+    if (dbCache.has(inv.id)) result.set(inv.id, dbCache.get(inv.id)!)
   }
 
-  // Add already-cached entries
-  for (const inv of invoices) {
+  // 3. Fetch from API only what's not in DB cache (also check in-memory cache)
+  const toFetch = accountable.filter(
+    (inv) => !dbCache.has(inv.id) && getFromCache(`ledger_${inv.id}`) === null
+  )
+
+  if (toFetch.length > 0) {
+    const newEntries: { invoiceId: bigint; accountCode: string | null }[] = []
+
+    for (let i = 0; i < toFetch.length; i += CONCURRENCY) {
+      const batch = toFetch.slice(i, i + CONCURRENCY)
+      const results = await Promise.allSettled(
+        batch.map((inv) =>
+          fetchLedgerEntry(inv.id).then((e) => ({ id: inv.id, code: extractAccountCode(e.ledger_entry_lines) }))
+        )
+      )
+      for (const r of results) {
+        if (r.status === 'fulfilled') {
+          result.set(r.value.id, r.value.code)
+          newEntries.push({ invoiceId: BigInt(r.value.id), accountCode: r.value.code })
+        }
+      }
+    }
+
+    // 4. Persist new results to DB (upsert to handle retries)
+    if (newEntries.length > 0) {
+      await Promise.allSettled(
+        newEntries.map((e) =>
+          prisma.ledgerEntryCache.upsert({
+            where: { invoiceId: e.invoiceId },
+            update: { accountCode: e.accountCode, fetchedAt: new Date() },
+            create: { invoiceId: e.invoiceId, accountCode: e.accountCode },
+          })
+        )
+      )
+    }
+  }
+
+  // 5. Add in-memory cached entries (not in DB yet)
+  for (const inv of accountable) {
     if (!result.has(inv.id)) {
       const cached = getFromCache<PLLedgerEntry>(`ledger_${inv.id}`)
-      result.set(inv.id, cached ? extractAccountCode(cached.ledger_entry_lines) : null)
+      if (cached) result.set(inv.id, extractAccountCode(cached.ledger_entry_lines))
     }
   }
 

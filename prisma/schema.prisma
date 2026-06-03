@@ -25,6 +25,14 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+// Persistent cache for Pennylane ledger entry account codes
+// Avoids re-fetching on every request (survives process restarts)
+model LedgerEntryCache {
+  invoiceId   BigInt   @id
+  accountCode String?  // e.g. "611", "626", null if no 6x debit found
+  fetchedAt   DateTime @default(now())
+}
+
 model PipelineMonthEntry {
   id         Int      @id @default(autoincrement())
   clientName String
