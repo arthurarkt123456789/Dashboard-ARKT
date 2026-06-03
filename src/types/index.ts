@@ -154,6 +154,8 @@ export interface DashboardData {
   pipeline: PipelineEntry[]
   settings: AppSettings
   expenseCoverage: { categorized: number; total: number; totalAmount: number; categorizedAmount: number }
+  cogsDetail: { date: string; supplier: string; accountCode: string; amount: number }[]
+  payrollDetail: { date: string; supplier: string; accountCode: string; amount: number }[]
   pennylaneError?: string | null
 }
 

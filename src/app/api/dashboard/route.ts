@@ -15,6 +15,7 @@ import {
   detectDuplicates,
   getFiscalYear,
   getPrevFiscalYear,
+  classifyByAccountCode,
 } from '@/lib/calculations'
 import { format, addMonths } from 'date-fns'
 import { PipelineEntry, PLCustomerInvoice, PLSupplierInvoice, DEFAULT_SETTINGS, extractClientName } from '@/types'
@@ -105,7 +106,6 @@ export async function GET() {
   runRate.variance = runRate.total - prevYearTotal
   runRate.variancePct = prevYearTotal > 0 ? ((runRate.total - prevYearTotal) / prevYearTotal) * 100 : 0
 
-  // Coverage stats: how many invoices have Pennylane accounting categories
   const ht = (e: PLSupplierInvoice) => parseFloat(e.currency_amount_before_tax) || 0
   const categorized = currentExpenses.filter((e) => categoryMap.get(e.id) != null).length
   const expenseCoverage = {
@@ -114,6 +114,21 @@ export async function GET() {
     totalAmount: currentExpenses.reduce((s, e) => s + ht(e), 0),
     categorizedAmount: currentExpenses.filter((e) => categoryMap.get(e.id) != null).reduce((s, e) => s + ht(e), 0),
   }
+
+  // Detail lines for COGS and payroll — for verification in the UI
+  const fyStart = format(getFiscalYear(now).start, 'yyyy-MM-dd')
+  const fyNow = format(now, 'yyyy-MM-dd')
+  const fyExpenses = currentExpenses.filter((e) => e.date >= fyStart && e.date <= fyNow)
+
+  const cogsDetail = fyExpenses
+    .filter((e) => classifyByAccountCode(categoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes) === 'cogs')
+    .map((e) => ({ date: e.date, supplier: extractClientName(e.label), accountCode: categoryMap.get(e.id) ?? '—', amount: ht(e) }))
+    .sort((a, b) => b.amount - a.amount)
+
+  const payrollDetail = fyExpenses
+    .filter((e) => classifyByAccountCode(categoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes) === 'payroll')
+    .map((e) => ({ date: e.date, supplier: extractClientName(e.label), accountCode: categoryMap.get(e.id) ?? '—', amount: ht(e) }))
+    .sort((a, b) => b.amount - a.amount)
 
   return NextResponse.json({
     monthly,
@@ -126,6 +141,8 @@ export async function GET() {
     pipeline,
     settings,
     expenseCoverage,
+    cogsDetail,
+    payrollDetail,
     pennylaneError,
   })
 }

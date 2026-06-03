@@ -104,7 +104,7 @@ export default function DashboardPage() {
             <PipelineTable pipeline={data.pipeline} onRefresh={load} />
           </section>
 
-          <PLSection fiscal={data.fiscal} expenses={data.expenses} />
+          <PLSection fiscal={data.fiscal} expenses={data.expenses} cogsDetail={data.cogsDetail} payrollDetail={data.payrollDetail} />
 
           <CashFlowSection cashFlow={data.cashFlow} />
 
