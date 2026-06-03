@@ -83,14 +83,8 @@ export async function GET() {
     updatedAt: p.updatedAt.toISOString(),
   }))
 
-  // Fetch ledger entries (accounting codes) — only for complete invoices, 6s timeout
-  const timeout = new Promise<Map<number, string | null>>((resolve) =>
-    setTimeout(() => resolve(new Map()), 6000)
-  )
-  const categoryMap = await Promise.race([
-    fetchLedgerEntries(currentExpenses),
-    timeout,
-  ]).catch(() => new Map())
+  // Fetch ledger entries — complete invoices only, 30s timeout
+  const categoryMap = await fetchLedgerEntries(currentExpenses).catch(() => new Map())
 
   const monthly = computeMonthlyRevenue(currentInvoices, prevInvoices, currentExpenses, prevExpenses, settings, now, categoryMap)
   const invoicedUnpaid = currentInvoices

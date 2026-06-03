@@ -99,10 +99,10 @@ async function fetchLedgerEntry(invoiceId: number): Promise<PLLedgerEntry> {
 export async function fetchLedgerEntries(
   invoices: PLSupplierInvoice[]
 ): Promise<Map<number, string | null>> {
-  const CONCURRENCY = 5
+  const CONCURRENCY = 10  // Pennylane allows 25 req/5s — 10 parallel is safe
   const result = new Map<number, string | null>()
 
-  // Only complete invoices have ledger lines — skip the rest
+  // Only complete invoices have ledger lines — skip the rest (saves most API calls)
   const toFetch = invoices.filter(
     (inv) => inv.accounting_status === 'complete' && getFromCache(`ledger_${inv.id}`) === null
   )
@@ -117,7 +117,7 @@ export async function fetchLedgerEntries(
     for (const r of results) {
       if (r.status === 'fulfilled') result.set(r.value.id, r.value.code)
     }
-    if (i + CONCURRENCY < toFetch.length) await new Promise((r) => setTimeout(r, 400))
+    // No delay needed between batches — 10 req at once is well within 25/5s limit
   }
 
   // Add already-cached entries
