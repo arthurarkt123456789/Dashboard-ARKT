@@ -2,10 +2,9 @@
 
 import { useState } from 'react'
 import {
-  AreaChart,
-  Area,
-  Line,
   ComposedChart,
+  Bar,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -16,9 +15,24 @@ import {
 import { MonthlyRevenue, FiscalYearSummary } from '@/types'
 
 const fmt = (n: number) =>
-  n >= 1000 ? `${(n / 1000).toFixed(1)}k€` : `${n.toFixed(0)}€`
+  n >= 1000 ? `${(n / 1000).toFixed(1)}k€` : `${Math.round(n)}€`
 
-type Mode = 'margin' | 'revenue'
+type Mode = 'cumulative' | 'monthly'
+
+const CustomTooltip = ({ active, payload, label }: Record<string, unknown>) => {
+  if (!active || !Array.isArray(payload) || payload.length === 0) return null
+  return (
+    <div className="chart-tooltip">
+      <div className="chart-tooltip-title">{String(label)}</div>
+      {(payload as Array<{ name: string; value: number; color: string }>).map((p) => (
+        <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', color: p.color }}>
+          <span>{p.name}</span>
+          <span style={{ fontWeight: 600 }}>{fmt(p.value ?? 0)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 export default function RevenueChart({
   monthly,
@@ -27,178 +41,88 @@ export default function RevenueChart({
   monthly: MonthlyRevenue[]
   fiscal: FiscalYearSummary
 }) {
-  const [mode, setMode] = useState<Mode>('margin')
+  const [mode, setMode] = useState<Mode>('cumulative')
 
-  // Stacked area data: cumulative breakdown of gross margin components
-  const marginData = monthly.map((m) => ({
-    name: m.label,
-    payroll: m.cumPayroll,
-    external: m.cumExternalCosts,
-    director: m.cumDirectorCharges,
-    meulery: m.cumMeuleryCharges,
-    ebe: Math.max(0, m.cumGrossMargin - m.cumPayroll - m.cumExternalCosts - m.cumDirectorCharges - m.cumMeuleryCharges),
-    marginLine: m.cumGrossMargin,
-    prevMarginLine: m.prevYearCumGrossMargin,
-  }))
+  const data = monthly.map((m) => {
+    // EBE = gross margin - payroll - external - director - meulery
+    const ebe = m.grossMargin - m.payroll - m.externalCosts - m.directorCharges - m.meuleryCharges
+    const prevEbe = m.prevYearGrossMargin - m.prevYearPayroll - m.prevYearExternalCosts - m.prevYearDirectorCharges - m.prevYearMeuleryCharges
 
-  const revenueData = monthly.map((m) => ({
-    name: m.label,
-    'CA cumulé N': m.cumRevenue,
-    'CA cumulé N-1': m.prevYearCumRevenue,
-    'Marge brute N': m.cumGrossMargin,
-    'Marge brute N-1': m.prevYearCumGrossMargin,
-  }))
+    const cumEbe = m.cumGrossMargin - m.cumPayroll - m.cumExternalCosts - m.cumDirectorCharges - m.cumMeuleryCharges
+    const prevCumEbe = m.prevYearCumGrossMargin - m.prevYearCumPayroll
+    // Note: cumulative N-1 EBE is approximate (we only have cumPayroll for N-1)
 
-  const CustomTooltip = ({ active, payload, label }: Record<string, unknown>) => {
-    if (!active || !payload) return null
-    const items = payload as Array<{ name: string; value: number; color: string; fill?: string }>
-    return (
-      <div className="chart-tooltip">
-        <div className="chart-tooltip-title">{label as string}</div>
-        {items.map((item) => (
-          <div key={item.name} style={{ color: item.color || item.fill, display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
-            <span>{item.name}</span>
-            <span style={{ fontWeight: 600 }}>{fmt(item.value)}</span>
-          </div>
-        ))}
-      </div>
-    )
-  }
+    return mode === 'cumulative'
+      ? {
+          name: m.label,
+          'CA': m.cumRevenue,
+          'CA N-1': m.prevYearCumRevenue,
+          'Marge': m.cumGrossMargin,
+          'Marge N-1': m.prevYearCumGrossMargin,
+          'Masse salariale': m.cumPayroll,
+          'Masse sal. N-1': m.prevYearCumPayroll,
+          'EBE': Math.max(0, cumEbe),
+          'Perte': Math.min(0, cumEbe),
+          'EBE N-1': Math.max(0, prevCumEbe),
+        }
+      : {
+          name: m.label,
+          'CA': m.revenue,
+          'CA N-1': m.prevYearRevenue,
+          'Marge': m.grossMargin,
+          'Marge N-1': m.prevYearGrossMargin,
+          'Masse salariale': m.payroll,
+          'Masse sal. N-1': m.prevYearPayroll,
+          'EBE': Math.max(0, ebe),
+          'Perte': Math.min(0, ebe),
+          'EBE N-1': Math.max(0, prevEbe),
+        }
+  })
 
   return (
     <section className="section">
       <div className="section-header">
-        <h2 className="section-title">Marge &amp; Résultat — Exercice {fiscal.year}</h2>
+        <h2 className="section-title">CA · Marge · Masse salariale · EBE — Exercice {fiscal.year}</h2>
         <div className="toggle-group">
-          <button className={`toggle-btn ${mode === 'margin' ? 'active' : ''}`} onClick={() => setMode('margin')}>
-            Décomposition marge
+          <button className={`toggle-btn ${mode === 'cumulative' ? 'active' : ''}`} onClick={() => setMode('cumulative')}>
+            Cumulé
           </button>
-          <button className={`toggle-btn ${mode === 'revenue' ? 'active' : ''}`} onClick={() => setMode('revenue')}>
-            CA & Marge
+          <button className={`toggle-btn ${mode === 'monthly' ? 'active' : ''}`} onClick={() => setMode('monthly')}>
+            Mensuel
           </button>
         </div>
       </div>
 
-      {mode === 'margin' ? (
-        <div style={{ height: 340 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={marginData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="name" tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} />
-              <YAxis tickFormatter={(v) => fmt(v)} tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} width={60} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 12 }} />
-              <Area
-                type="monotone"
-                dataKey="payroll"
-                name="Masse salariale"
-                stackId="1"
-                stroke="#e07b54"
-                fill="#e07b54"
-                fillOpacity={0.85}
-              />
-              <Area
-                type="monotone"
-                dataKey="external"
-                name="Frais externes"
-                stackId="1"
-                stroke="#8c8c8c"
-                fill="#8c8c8c"
-                fillOpacity={0.75}
-              />
-              <Area
-                type="monotone"
-                dataKey="director"
-                name="Charges dirigeant"
-                stackId="1"
-                stroke="#9b59b6"
-                fill="#9b59b6"
-                fillOpacity={0.75}
-              />
-              <Area
-                type="monotone"
-                dataKey="meulery"
-                name="Charges Meuleries"
-                stackId="1"
-                stroke="#1abc9c"
-                fill="#1abc9c"
-                fillOpacity={0.75}
-              />
-              <Area
-                type="monotone"
-                dataKey="ebe"
-                name="EBE"
-                stackId="1"
-                stroke="var(--green)"
-                fill="var(--green)"
-                fillOpacity={0.8}
-              />
-              <Line
-                type="monotone"
-                dataKey="marginLine"
-                name="Marge brute N"
-                stroke="var(--accent)"
-                strokeWidth={2}
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="prevMarginLine"
-                name="Marge brute N-1"
-                stroke="var(--accent)"
-                strokeWidth={1.5}
-                strokeDasharray="5 5"
-                dot={false}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      ) : (
-        <div style={{ height: 340 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={revenueData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="name" tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} />
-              <YAxis tickFormatter={(v) => fmt(v)} tick={{ fill: 'var(--text-secondary)', fontSize: 12 }} width={60} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend wrapperStyle={{ color: 'var(--text-secondary)', fontSize: 12 }} />
-              <Line
-                type="monotone"
-                dataKey="CA cumulé N"
-                stroke="var(--accent)"
-                strokeWidth={2}
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="CA cumulé N-1"
-                stroke="var(--accent)"
-                strokeWidth={1.5}
-                strokeDasharray="4 4"
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="Marge brute N"
-                stroke="var(--green)"
-                strokeWidth={2}
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="Marge brute N-1"
-                stroke="var(--green)"
-                strokeWidth={1.5}
-                strokeDasharray="4 4"
-                dot={false}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+      <div style={{ height: 360 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }} barCategoryGap="20%">
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="name" tick={{ fill: 'var(--text-secondary)', fontSize: 11 }} />
+            <YAxis
+              tickFormatter={(v) => fmt(v)}
+              tick={{ fill: 'var(--text-secondary)', fontSize: 11 }}
+              width={65}
+            />
+            <Tooltip content={<CustomTooltip />} />
+            <Legend
+              wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)', paddingTop: 8 }}
+              iconType="line"
+            />
 
-      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 6 }}>
-        Les zones empilées représentent la décomposition cumulée de la marge brute (charges + EBE).
+            {/* Bars — behind lines */}
+            <Bar dataKey="Masse salariale" fill="var(--orange)" opacity={0.75} barSize={14} />
+            <Bar dataKey="Masse sal. N-1" fill="var(--orange)" opacity={0.35} barSize={14} />
+            <Bar dataKey="EBE" fill="var(--green)" opacity={0.75} barSize={14} />
+            <Bar dataKey="Perte" fill="var(--red)" opacity={0.75} barSize={14} />
+            <Bar dataKey="EBE N-1" fill="var(--green)" opacity={0.35} barSize={14} />
+
+            {/* Lines — on top */}
+            <Line type="monotone" dataKey="CA" stroke="var(--accent)" strokeWidth={2.5} dot={false} />
+            <Line type="monotone" dataKey="CA N-1" stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="5 4" dot={false} />
+            <Line type="monotone" dataKey="Marge" stroke="#06b6d4" strokeWidth={2.5} dot={false} />
+            <Line type="monotone" dataKey="Marge N-1" stroke="#06b6d4" strokeWidth={1.5} strokeDasharray="5 4" dot={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
       </div>
     </section>
   )
