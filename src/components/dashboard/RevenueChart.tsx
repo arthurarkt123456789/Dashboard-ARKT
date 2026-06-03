@@ -44,11 +44,11 @@ export default function RevenueChart({
   const [mode, setMode] = useState<Mode>('cumulative')
 
   const data = monthly.map((m) => {
-    // EBE = gross margin - payroll - external - director - meulery
-    const ebe = m.grossMargin - m.payroll - m.externalCosts - m.directorCharges - m.meuleryCharges
-    const prevEbe = m.prevYearGrossMargin - m.prevYearPayroll - m.prevYearExternalCosts - m.prevYearDirectorCharges - m.prevYearMeuleryCharges
+    // EBE = gross margin - payroll - external
+    const ebe = m.grossMargin - m.payroll - m.externalCosts
+    const prevEbe = m.prevYearGrossMargin - m.prevYearPayroll - m.prevYearExternalCosts
 
-    const cumEbe = m.cumGrossMargin - m.cumPayroll - m.cumExternalCosts - m.cumDirectorCharges - m.cumMeuleryCharges
+    const cumEbe = m.cumGrossMargin - m.cumPayroll - m.cumExternalCosts
     const prevCumEbe = m.prevYearCumGrossMargin - m.prevYearCumPayroll
     // Note: cumulative N-1 EBE is approximate (we only have cumPayroll for N-1)
 

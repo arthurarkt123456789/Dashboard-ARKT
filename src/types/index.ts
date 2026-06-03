@@ -60,18 +60,12 @@ export interface MonthlyRevenue {
   // Expense breakdown fields
   payroll: number
   externalCosts: number
-  directorCharges: number
-  meuleryCharges: number
   ebe: number
   cumPayroll: number
   cumExternalCosts: number
-  cumDirectorCharges: number
-  cumMeuleryCharges: number
   cumEbe: number
   prevYearPayroll: number
   prevYearExternalCosts: number
-  prevYearDirectorCharges: number
-  prevYearMeuleryCharges: number
   prevYearCumPayroll: number
 }
 
@@ -140,8 +134,6 @@ export interface ExpenseSummary {
   totalPayroll: number
   totalDirectCosts: number
   totalExternalCosts: number
-  totalDirectorCharges: number
-  totalMeuleryCharges: number
   totalExpenses: number
   monthlyPayroll: number[]
   monthlyDirectCosts: number[]
@@ -189,16 +181,12 @@ export interface DashboardData {
   expenseCoverage: { categorized: number; total: number; totalAmount: number; categorizedAmount: number }
   cogsDetail: { date: string; supplier: string; accountCode: string; amount: number }[]
   payrollDetail: { date: string; supplier: string; accountCode: string; amount: number }[]
-  directorDetail: { date: string; supplier: string; accountCode: string; amount: number }[]
-  meuleryDetail: { date: string; supplier: string; accountCode: string; amount: number }[]
   prevYearInvoiceCount: number
   prevPayroll: number
   prevYearFullExpenses: {
     totalPayroll: number
     totalDirectCosts: number
     totalExternalCosts: number
-    totalDirectorCharges: number
-    totalMeuleryCharges: number
   }
   pennylaneError?: string | null
 }
@@ -216,8 +204,6 @@ export interface AppSettings {
   bartPucciNames: string[]
   cogsAccountPrefixes: string[]
   payrollAccountPrefixes: string[]
-  directorChargeSuppliers: string[]   // Charges dirigeant — par nom fournisseur
-  meuleryChargeSuppliers: string[]    // Charges Meuleries — par nom fournisseur
   treasuryItems: TreasuryItem[]
 }
 
@@ -227,8 +213,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   bartPucciNames: ['bart', 'pucci', 'bart & pucci', 'bart&pucci'],
   cogsAccountPrefixes: ['60', '601', '604', '607', '611', '612', '621'],
   payrollAccountPrefixes: ['641', '642', '644', '645', '646', '647', '648'],
-  directorChargeSuppliers: ['dmevent', 'enolane', 'amazon'],
-  meuleryChargeSuppliers: [],  // unused by default
   treasuryItems: [
     { name: 'Salaires (hors dirigeant)', monthlyAmount: 0, dayOfMonth: 30 },
     { name: 'Salaire dirigeant', monthlyAmount: 0, dayOfMonth: 30 },

@@ -70,8 +70,6 @@ export default function TreasurySection({
   const pastMonths = monthly.filter((m) => m.month < nowYM)
   const avgPayroll = avg(pastMonths.map((m) => m.payroll))
   const avgExternal = avg(pastMonths.map((m) => m.externalCosts))
-  const avgDirector = avg(pastMonths.map((m) => m.directorCharges))
-  const avgMeulery = avg(pastMonths.map((m) => m.meuleryCharges))
   const avgRevenue = avg(pastMonths.map((m) => m.revenue))
 
   // Non-salary treasury items (skip salary items — those come from Pennylane)
@@ -97,8 +95,6 @@ export default function TreasurySection({
     salaireDirigeant: number
     fixedItems: number[]
     externalCosts: number
-    directorCharges: number
-    meuleryCharges: number
     // Solde
     soldeDebut: number
     soldeFin: number
@@ -126,11 +122,9 @@ export default function TreasurySection({
 
     // External costs from Pennylane for past, average for future
     const externalCosts = isPast || isCurrent ? (md?.externalCosts ?? 0) : avgExternal
-    const directorCharges = isPast || isCurrent ? (md?.directorCharges ?? 0) : avgDirector
-    const meuleryCharges = isPast || isCurrent ? (md?.meuleryCharges ?? 0) : avgMeulery
 
     const totalIn = isPast ? caEncaisse : caFacture + pipeline
-    const totalOut = salairesAutres + salaireDirigeant + itemAmounts.reduce((s, v) => s + v, 0) + externalCosts + directorCharges + meuleryCharges
+    const totalOut = salairesAutres + salaireDirigeant + itemAmounts.reduce((s, v) => s + v, 0) + externalCosts
 
     const soldeDebut = runningBalance
     runningBalance += totalIn - totalOut
@@ -140,7 +134,7 @@ export default function TreasurySection({
       caFacture, caEncaisse, pipeline,
       salairesAutres, salaireDirigeant,
       fixedItems: itemAmounts,
-      externalCosts, directorCharges, meuleryCharges,
+      externalCosts,
       soldeDebut, soldeFin: runningBalance,
     })
   }
@@ -227,8 +221,6 @@ export default function TreasurySection({
                 {blocks.map((b, i) => <Cell key={i} value={b.fixedItems[idx] ?? 0} color="var(--red)" />)}
               </tr>
             ))}
-            <DataRow label="Charges dirigeant" values={blocks.map((b) => b.directorCharges)} color="var(--orange)" />
-            <DataRow label="Charges Meuleries" values={blocks.map((b) => b.meuleryCharges)} color="var(--text-secondary)" />
             <DataRow label="Frais externes" values={blocks.map((b) => b.externalCosts)} color="var(--text-secondary)" />
 
             <SectionRow label="SOLDE" color="var(--text-secondary)" />

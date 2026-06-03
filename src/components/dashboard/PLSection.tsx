@@ -65,8 +65,6 @@ interface Col {
   grossMarginEncPct: number
   grossMarginTheoPct: number
   payroll: number
-  directorCharges: number
-  meuleryCharges: number
   externalCosts: number
   resultEnc: number
   resultTheo: number
@@ -91,8 +89,6 @@ function PLTable({ cols }: { cols: Col[] }) {
     { label: '= Marge Brute enc.', key: 'grossMarginEnc', pctKey: 'grossMarginEncPct' },
     { label: '= Marge Brute théo.', key: 'grossMarginTheo', pctKey: 'grossMarginTheoPct', bold: true, separator: true },
     { label: '— Masse salariale', key: 'payroll', indent: true, sign: -1 },
-    { label: '— Charges dirigeant', key: 'directorCharges', indent: true, sign: -1 },
-    { label: '— Charges Meuleries', key: 'meuleryCharges', indent: true, sign: -1 },
     { label: '— Frais externes', key: 'externalCosts', indent: true, sign: -1 },
     { label: '= Résultat enc.', key: 'resultEnc', pctKey: 'resultEncPct' },
     { label: '= Résultat théo.', key: 'resultTheo', pctKey: 'resultTheoPct', bold: true, separator: true },
@@ -169,8 +165,6 @@ export default function PLSection({
   prevYearFullExpenses,
   cogsDetail,
   payrollDetail,
-  directorDetail,
-  meuleryDetail,
 }: {
   fiscal: FiscalYearSummary
   expenses: ExpenseSummary
@@ -179,15 +173,11 @@ export default function PLSection({
     totalPayroll: number
     totalDirectCosts: number
     totalExternalCosts: number
-    totalDirectorCharges: number
-    totalMeuleryCharges: number
   }
   cogsDetail: DetailLine[]
   payrollDetail: DetailLine[]
-  directorDetail: DetailLine[]
-  meuleryDetail: DetailLine[]
 }) {
-  const totalCharges = expenses.totalPayroll + expenses.totalDirectCosts + expenses.totalExternalCosts + expenses.totalDirectorCharges + expenses.totalMeuleryCharges
+  const totalCharges = expenses.totalPayroll + expenses.totalDirectCosts + expenses.totalExternalCosts
   const ebitda = fiscal.totalRevenue - totalCharges
   const ebitdaPct = fiscal.totalRevenue > 0 ? (ebitda / fiscal.totalRevenue) * 100 : 0
   const theoreticalEbitda = fiscal.theoreticalRevenue - totalCharges
@@ -205,8 +195,6 @@ export default function PLSection({
     grossMarginEncPct: fiscal.grossMarginPct,
     grossMarginTheoPct: fiscal.theoreticalGrossMarginPct,
     payroll: expenses.totalPayroll,
-    directorCharges: expenses.totalDirectorCharges,
-    meuleryCharges: expenses.totalMeuleryCharges,
     externalCosts: expenses.totalExternalCosts,
     resultEnc: ebitda,
     resultTheo: theoreticalEbitda,
@@ -220,11 +208,9 @@ export default function PLSection({
   const prevGmEnc = ytdMonthly.reduce((s, m) => s + m.prevYearGrossMargin, 0)
   const prevYtdPayroll = ytdMonthly.reduce((s, m) => s + m.prevYearPayroll, 0)
   const prevYtdExternal = ytdMonthly.reduce((s, m) => s + m.prevYearExternalCosts, 0)
-  const prevYtdDirector = ytdMonthly.reduce((s, m) => s + m.prevYearDirectorCharges, 0)
-  const prevYtdMeulery = ytdMonthly.reduce((s, m) => s + m.prevYearMeuleryCharges, 0)
   const prevYtdRevenue = ytdMonthly.reduce((s, m) => s + m.prevYearRevenue, 0)
   const prevYtdDirectCosts = ytdMonthly.reduce((s, m) => s + (m.prevYearRevenue - m.prevYearGrossMargin), 0)
-  const prevYtdResult = prevGmEnc - prevYtdPayroll - prevYtdExternal - prevYtdDirector - prevYtdMeulery
+  const prevYtdResult = prevGmEnc - prevYtdPayroll - prevYtdExternal
 
   const n1Ytd: Col = {
     label: `N-1 YTD`,
@@ -237,8 +223,6 @@ export default function PLSection({
     grossMarginEncPct: prevYtdRevenue > 0 ? (prevGmEnc / prevYtdRevenue) * 100 : 0,
     grossMarginTheoPct: prevYtdRevenue > 0 ? (prevGmEnc / prevYtdRevenue) * 100 : 0,
     payroll: prevYtdPayroll,
-    directorCharges: prevYtdDirector,
-    meuleryCharges: prevYtdMeulery,
     externalCosts: prevYtdExternal,
     resultEnc: prevYtdResult,
     resultTheo: prevYtdResult,
@@ -251,10 +235,7 @@ export default function PLSection({
   const prevFullRevenue = fiscal.prevFullRevenue
   const prevFullDirectCosts = fiscal.prevFullDirectCosts
   const prevFullGm = fiscal.prevFullGrossMargin
-  const prevFullCharges = prevFull
-    ? prevFull.totalPayroll + prevFull.totalDirectCosts + prevFull.totalExternalCosts + prevFull.totalDirectorCharges + prevFull.totalMeuleryCharges
-    : 0
-  const prevFullResult = prevFullRevenue - prevFullDirectCosts - (prevFull ? (prevFull.totalPayroll + prevFull.totalExternalCosts + prevFull.totalDirectorCharges + prevFull.totalMeuleryCharges) : 0)
+  const prevFullResult = prevFullRevenue - prevFullDirectCosts - (prevFull ? (prevFull.totalPayroll + prevFull.totalExternalCosts) : 0)
 
   const n1Full: Col = {
     label: `N-1 Exercice complet`,
@@ -267,8 +248,6 @@ export default function PLSection({
     grossMarginEncPct: prevFullRevenue > 0 ? (prevFullGm / prevFullRevenue) * 100 : 0,
     grossMarginTheoPct: prevFullRevenue > 0 ? (prevFullGm / prevFullRevenue) * 100 : 0,
     payroll: prevFull?.totalPayroll ?? 0,
-    directorCharges: prevFull?.totalDirectorCharges ?? 0,
-    meuleryCharges: prevFull?.totalMeuleryCharges ?? 0,
     externalCosts: prevFull?.totalExternalCosts ?? 0,
     resultEnc: prevFullResult,
     resultTheo: prevFullResult,
@@ -286,8 +265,6 @@ export default function PLSection({
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 16 }}>
         <DetailTable lines={cogsDetail} title="Détail COGS" />
         <DetailTable lines={payrollDetail} title="Détail masse salariale" />
-        <DetailTable lines={directorDetail} title="Détail charges dirigeant" />
-        <DetailTable lines={meuleryDetail} title="Détail charges Meuleries" />
       </div>
     </section>
   )

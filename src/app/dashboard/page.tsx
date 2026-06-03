@@ -150,8 +150,6 @@ export default function DashboardPage() {
             prevYearFullExpenses={data.prevYearFullExpenses}
             cogsDetail={data.cogsDetail}
             payrollDetail={data.payrollDetail}
-            directorDetail={data.directorDetail}
-            meuleryDetail={data.meuleryDetail}
           />
 
           {/* 5. Treasury section */}
@@ -190,8 +188,6 @@ function SettingsPanel({
   const [bartPucciNames, setBartPucciNames] = useState(settings.bartPucciNames.join(', '))
   const [cogsPrefixes, setCogsPrefixes] = useState(settings.cogsAccountPrefixes.join(', '))
   const [payrollPrefixes, setPayrollPrefixes] = useState(settings.payrollAccountPrefixes.join(', '))
-  const [directorSuppliers, setDirectorSuppliers] = useState(settings.directorChargeSuppliers.join(', '))
-  const [meulerySuppliers, setMeulerySuppliers] = useState(settings.meuleryChargeSuppliers.join(', '))
   const [treasuryItems, setTreasuryItems] = useState<TreasuryItem[]>(settings.treasuryItems ?? [])
   const [saving, setSaving] = useState(false)
 
@@ -206,8 +202,6 @@ function SettingsPanel({
         bartPucciNames: JSON.stringify(bartPucciNames.split(',').map((v: string) => v.trim()).filter(Boolean)),
         cogsAccountPrefixes: JSON.stringify(cogsPrefixes.split(',').map((v: string) => v.trim()).filter(Boolean)),
         payrollAccountPrefixes: JSON.stringify(payrollPrefixes.split(',').map((v: string) => v.trim()).filter(Boolean)),
-        directorChargeSuppliers: JSON.stringify(directorSuppliers.split(',').map((v: string) => v.trim()).filter(Boolean)),
-        meuleryChargeSuppliers: JSON.stringify(meulerySuppliers.split(',').map((v: string) => v.trim()).filter(Boolean)),
         treasuryItems: JSON.stringify(treasuryItems),
       }),
     })
@@ -298,17 +292,6 @@ function SettingsPanel({
           <label>Codes masse salariale</label>
           <input className="form-input" value={payrollPrefixes}
             onChange={(e) => setPayrollPrefixes(e.target.value)} placeholder="641, 642, 644, 645, 646" />
-        </div>
-        <div className="form-group">
-          <label>Charges dirigeant (noms fournisseurs)</label>
-          <input className="form-input" value={directorSuppliers}
-            onChange={(e) => setDirectorSuppliers(e.target.value)} placeholder="dmevent, enolane, amazon" />
-          <span style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>Prioritaire sur les codes comptables</span>
-        </div>
-        <div className="form-group">
-          <label>Charges Meuleries (noms fournisseurs)</label>
-          <input className="form-input" value={meulerySuppliers}
-            onChange={(e) => setMeulerySuppliers(e.target.value)} placeholder="carrelages lupi, little sea" />
         </div>
       </div>
 

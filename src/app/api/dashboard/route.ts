@@ -15,7 +15,7 @@ import {
   detectDuplicates,
   getFiscalYear,
   getPrevFiscalYear,
-  classifyExpense,
+  classifyByAccountCode,
 } from '@/lib/calculations'
 import { format, addMonths } from 'date-fns'
 import { PipelineEntry, PipelineGrid, PLCustomerInvoice, PLSupplierInvoice, DEFAULT_SETTINGS, extractClientName } from '@/types'
@@ -155,26 +155,22 @@ export async function GET() {
 
   // Detail lines for COGS and payroll — for verification in the UI
   const fyExpenses = currentExpenses.filter((e) => e.date >= fyStart && e.date <= fyNow)
-  const classify = (e: PLSupplierInvoice) => classifyExpense(extractClientName(e.label), currentCategoryMap.get(e.id), settings)
+  const classify = (e: PLSupplierInvoice) => classifyByAccountCode(currentCategoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes)
   const toDetail = (e: PLSupplierInvoice) => ({ date: e.date, supplier: extractClientName(e.label), accountCode: currentCategoryMap.get(e.id) ?? '—', amount: ht(e) })
 
   const cogsDetail = fyExpenses.filter((e) => classify(e) === 'cogs').map(toDetail).sort((a, b) => b.amount - a.amount)
   const payrollDetail = fyExpenses.filter((e) => classify(e) === 'payroll').map(toDetail).sort((a, b) => b.amount - a.amount)
-  const directorDetail = fyExpenses.filter((e) => classify(e) === 'director').map(toDetail).sort((a, b) => b.amount - a.amount)
-  const meuleryDetail = fyExpenses.filter((e) => classify(e) === 'meulery').map(toDetail).sort((a, b) => b.amount - a.amount)
 
   // Prev year payroll
   const prevPayroll = prevPayrollLedger.total > 0 ? prevPayrollLedger.total : 0
 
   // Prev year full expenses
-  const classifyPrev = (e: PLSupplierInvoice) => classifyExpense(extractClientName(e.label), prevCategoryMap.get(e.id), settings)
+  const classifyPrev = (e: PLSupplierInvoice) => classifyByAccountCode(prevCategoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes)
   const prevPayrollFromInvoices = prevExpenses.filter((e) => classifyPrev(e) === 'payroll').reduce((s, e) => s + ht(e), 0)
   const prevYearFullExpenses = {
     totalPayroll: prevPayroll + prevPayrollFromInvoices,  // OD journal + supplier invoices (mutuelle etc.)
     totalDirectCosts: prevExpenses.filter((e) => classifyPrev(e) === 'cogs').reduce((s, e) => s + ht(e), 0),
     totalExternalCosts: prevExpenses.filter((e) => classifyPrev(e) === 'external').reduce((s, e) => s + ht(e), 0),
-    totalDirectorCharges: prevExpenses.filter((e) => classifyPrev(e) === 'director').reduce((s, e) => s + ht(e), 0),
-    totalMeuleryCharges: prevExpenses.filter((e) => classifyPrev(e) === 'meulery').reduce((s, e) => s + ht(e), 0),
   }
 
   const prevYearInvoiceCount = prevInvoices.length
@@ -193,8 +189,6 @@ export async function GET() {
     expenseCoverage,
     cogsDetail,
     payrollDetail,
-    directorDetail,
-    meuleryDetail,
     prevYearInvoiceCount,
     prevPayroll,
     prevYearFullExpenses,
