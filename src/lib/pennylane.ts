@@ -175,7 +175,8 @@ export async function fetchPayrollFromLedger(
     for (const entry of res.items ?? []) {
       if (entry.date > toDate) continue
       if (entry.date < fromDate) { hitPastRange = true; break }
-      if (entry.status !== 'complete') continue
+      // Don't filter by status — OD payroll entries have null status
+      if (entry.status === 'validation_needed') continue
       const lower = (entry.label ?? '').toLowerCase()
       if (SALARY_KEYWORDS.some((k) => lower.includes(k))) {
         payrollEntries.push({ id: entry.id, date: entry.date })
