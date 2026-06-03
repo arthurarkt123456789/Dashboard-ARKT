@@ -11,6 +11,8 @@ export async function getSettings(): Promise<AppSettings> {
       bartPucciNames: map.bartPucciNames ? JSON.parse(map.bartPucciNames) : DEFAULT_SETTINGS.bartPucciNames,
       cogsAccountPrefixes: map.cogsAccountPrefixes ? JSON.parse(map.cogsAccountPrefixes) : DEFAULT_SETTINGS.cogsAccountPrefixes,
       payrollAccountPrefixes: map.payrollAccountPrefixes ? JSON.parse(map.payrollAccountPrefixes) : DEFAULT_SETTINGS.payrollAccountPrefixes,
+      directorChargeSuppliers: map.directorChargeSuppliers ? JSON.parse(map.directorChargeSuppliers) : DEFAULT_SETTINGS.directorChargeSuppliers,
+      meuleryChargeSuppliers: map.meuleryChargeSuppliers ? JSON.parse(map.meuleryChargeSuppliers) : DEFAULT_SETTINGS.meuleryChargeSuppliers,
     }
   } catch {
     return DEFAULT_SETTINGS

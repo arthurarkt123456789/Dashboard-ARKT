@@ -8,25 +8,27 @@ export async function GET() {
 
   const headers = { Authorization: `Bearer ${apiKey}` }
 
-  // Fetch enough to find a complete invoice
-  const res = await fetch('https://app.pennylane.com/api/external/v2/supplier_invoices?limit=100', { headers })
-  const data = await res.json()
-  const items: { id: number; label: string; accounting_status: string }[] = data?.items ?? []
+  // Check N-1: what's the oldest invoice we have?
+  const [firstPage, lastPage] = await Promise.all([
+    fetch('https://app.pennylane.com/api/external/v2/customer_invoices?limit=5&sort=-date', { headers }).then(r => r.json()),
+    fetch('https://app.pennylane.com/api/external/v2/customer_invoices?limit=5&sort=date', { headers }).then(r => r.json()),
+  ])
 
-  const complete = items.find(i => i.accounting_status === 'complete')
-  if (!complete) {
-    return NextResponse.json({ ok: true, error: 'No complete invoice found in first 100', statuses: items.map(i => i.accounting_status) })
-  }
+  const newest = firstPage?.items?.[0]?.date
+  const oldest = lastPage?.items?.[0]?.date
+  const totalPages = firstPage?.has_more
 
-  const ledger = await fetch(
-    `https://app.pennylane.com/api/external/v2/ledger_entries/${complete.id}`,
+  // Check payroll: try to find 641/645 ledger entries via a supplier invoice with payroll codes
+  // Also try GET /ledger_entries to see if it lists entries
+  const ledgerListRes = await fetch(
+    'https://app.pennylane.com/api/external/v2/ledger_entries?limit=3',
     { headers }
-  ).then(r => r.json())
+  ).then(r => r.json()).catch(() => null)
 
   return NextResponse.json({
     ok: true,
-    invoice: { id: complete.id, label: complete.label, accounting_status: complete.accounting_status },
-    ledger_entry_lines: ledger.ledger_entry_lines,
-    all_keys: Object.keys(ledger),
+    invoice_date_range: { newest, oldest, has_more_pages: totalPages },
+    total_customer_invoices_first5: firstPage?.items?.map((i: { date: string; invoice_number: string }) => ({ date: i.date, ref: i.invoice_number })),
+    ledger_entries_list_test: ledgerListRes,
   })
 }

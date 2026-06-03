@@ -15,7 +15,7 @@ import {
   detectDuplicates,
   getFiscalYear,
   getPrevFiscalYear,
-  classifyByAccountCode,
+  classifyExpense,
 } from '@/lib/calculations'
 import { format, addMonths } from 'date-fns'
 import { PipelineEntry, PLCustomerInvoice, PLSupplierInvoice, DEFAULT_SETTINGS, extractClientName } from '@/types'
@@ -120,15 +120,15 @@ export async function GET() {
   const fyNow = format(now, 'yyyy-MM-dd')
   const fyExpenses = currentExpenses.filter((e) => e.date >= fyStart && e.date <= fyNow)
 
-  const cogsDetail = fyExpenses
-    .filter((e) => classifyByAccountCode(categoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes) === 'cogs')
-    .map((e) => ({ date: e.date, supplier: extractClientName(e.label), accountCode: categoryMap.get(e.id) ?? '—', amount: ht(e) }))
-    .sort((a, b) => b.amount - a.amount)
+  const classify = (e: PLSupplierInvoice) => classifyExpense(extractClientName(e.label), categoryMap.get(e.id), settings)
+  const toDetail = (e: PLSupplierInvoice) => ({ date: e.date, supplier: extractClientName(e.label), accountCode: categoryMap.get(e.id) ?? '—', amount: ht(e) })
 
-  const payrollDetail = fyExpenses
-    .filter((e) => classifyByAccountCode(categoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes) === 'payroll')
-    .map((e) => ({ date: e.date, supplier: extractClientName(e.label), accountCode: categoryMap.get(e.id) ?? '—', amount: ht(e) }))
-    .sort((a, b) => b.amount - a.amount)
+  const cogsDetail = fyExpenses.filter((e) => classify(e) === 'cogs').map(toDetail).sort((a, b) => b.amount - a.amount)
+  const payrollDetail = fyExpenses.filter((e) => classify(e) === 'payroll').map(toDetail).sort((a, b) => b.amount - a.amount)
+  const directorDetail = fyExpenses.filter((e) => classify(e) === 'director').map(toDetail).sort((a, b) => b.amount - a.amount)
+  const meuleryDetail = fyExpenses.filter((e) => classify(e) === 'meulery').map(toDetail).sort((a, b) => b.amount - a.amount)
+
+  const prevYearInvoiceCount = prevInvoices.length
 
   return NextResponse.json({
     monthly,
@@ -143,6 +143,9 @@ export async function GET() {
     expenseCoverage,
     cogsDetail,
     payrollDetail,
+    directorDetail,
+    meuleryDetail,
+    prevYearInvoiceCount,
     pennylaneError,
   })
 }

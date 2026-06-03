@@ -69,15 +69,20 @@ export default function PLSection({
   expenses,
   cogsDetail,
   payrollDetail,
+  directorDetail,
+  meuleryDetail,
 }: {
   fiscal: FiscalYearSummary
   expenses: ExpenseSummary
   cogsDetail: DetailLine[]
   payrollDetail: DetailLine[]
+  directorDetail: DetailLine[]
+  meuleryDetail: DetailLine[]
 }) {
-  const ebitda = fiscal.totalGrossMargin - expenses.totalPayroll - expenses.totalExternalCosts
+  const totalCharges = expenses.totalPayroll + expenses.totalDirectCosts + expenses.totalExternalCosts + expenses.totalDirectorCharges + expenses.totalMeuleryCharges
+  const ebitda = fiscal.totalRevenue - totalCharges
   const ebitdaPct = fiscal.totalRevenue > 0 ? (ebitda / fiscal.totalRevenue) * 100 : 0
-  const theoreticalEbitda = fiscal.theoreticalGrossMargin - expenses.totalPayroll - expenses.totalExternalCosts
+  const theoreticalEbitda = fiscal.theoreticalRevenue - totalCharges
   const theoreticalEbitdaPct = fiscal.theoreticalRevenue > 0 ? (theoreticalEbitda / fiscal.theoreticalRevenue) * 100 : 0
 
   const rows: PLRow[] = [
@@ -88,6 +93,8 @@ export default function PLSection({
     { label: '= Marge brute encaissée', value: fiscal.totalGrossMargin, pct: fiscal.grossMarginPct, bold: false },
     { label: '= Marge brute théorique', value: fiscal.theoreticalGrossMargin, pct: fiscal.theoreticalGrossMarginPct, bold: true, separator: true },
     { label: '— Masse salariale', value: -expenses.totalPayroll, indent: true },
+    { label: '— Charges dirigeant', value: -expenses.totalDirectorCharges, indent: true },
+    { label: '— Charges Meuleries', value: -expenses.totalMeuleryCharges, indent: true },
     { label: '— Frais externes', value: -expenses.totalExternalCosts, indent: true },
     { label: '= Résultat encaissé', value: ebitda, pct: ebitdaPct, bold: false, positive: ebitda >= 0 },
     { label: '= Résultat théorique', value: theoreticalEbitda, pct: theoreticalEbitdaPct, bold: true, separator: true, positive: theoreticalEbitda >= 0 },
@@ -100,19 +107,9 @@ export default function PLSection({
 
       <div className="pl-table">
         {rows.map((row, i) => (
-          <div
-            key={i}
-            className={['pl-row', row.bold ? 'pl-row-bold' : '', row.separator ? 'pl-row-separator' : '', row.indent ? 'pl-row-indent' : ''].join(' ')}
-          >
+          <div key={i} className={['pl-row', row.bold ? 'pl-row-bold' : '', row.separator ? 'pl-row-separator' : '', row.indent ? 'pl-row-indent' : ''].join(' ')}>
             <span className="pl-label">{row.label}</span>
-            <span
-              className="pl-value"
-              style={{
-                color: row.bold
-                  ? row.positive !== undefined ? (row.positive ? 'var(--green)' : 'var(--red)') : 'var(--text-primary)'
-                  : row.value < 0 ? 'var(--red)' : 'var(--text-primary)',
-              }}
-            >
+            <span className="pl-value" style={{ color: row.bold ? (row.positive !== undefined ? (row.positive ? 'var(--green)' : 'var(--red)') : 'var(--text-primary)') : row.value < 0 ? 'var(--red)' : 'var(--text-primary)' }}>
               {fmt(row.value)}
               {row.pct !== undefined && <span className="pl-pct"> ({fmtPct(row.pct)})</span>}
             </span>
@@ -120,8 +117,12 @@ export default function PLSection({
         ))}
       </div>
 
-      <DetailTable lines={cogsDetail} title="Détail charges directes (COGS)" />
-      <DetailTable lines={payrollDetail} title="Détail masse salariale" />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+        <DetailTable lines={cogsDetail} title="Détail COGS" />
+        <DetailTable lines={payrollDetail} title="Détail masse salariale" />
+        <DetailTable lines={directorDetail} title="Détail charges dirigeant" />
+        <DetailTable lines={meuleryDetail} title="Détail charges Meuleries" />
+      </div>
     </section>
   )
 }

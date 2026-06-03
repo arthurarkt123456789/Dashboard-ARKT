@@ -78,10 +78,8 @@ function isBartPucci(name: string, names: string[]): boolean {
   return names.some((n) => lower.includes(n.toLowerCase()))
 }
 
-export type CostCategory = 'cogs' | 'payroll' | 'external'
+export type CostCategory = 'cogs' | 'payroll' | 'external' | 'director' | 'meulery'
 
-// code = account number from ledger entry (e.g. "626", "641", "611")
-// null = not yet accounted → default external
 export function classifyByAccountCode(
   code: string | null | undefined,
   cogsPrefixes: string[],
@@ -91,6 +89,18 @@ export function classifyByAccountCode(
   if (payrollPrefixes.some((p) => code.startsWith(p))) return 'payroll'
   if (cogsPrefixes.some((p) => code.startsWith(p))) return 'cogs'
   return 'external'
+}
+
+// Full classification: supplier name takes priority over account code
+export function classifyExpense(
+  supplierName: string,
+  accountCode: string | null | undefined,
+  settings: AppSettings
+): CostCategory {
+  const name = supplierName.toLowerCase()
+  if (settings.directorChargeSuppliers.some((s) => name.includes(s.toLowerCase()))) return 'director'
+  if (settings.meuleryChargeSuppliers.some((s) => name.includes(s.toLowerCase()))) return 'meulery'
+  return classifyByAccountCode(accountCode, settings.cogsAccountPrefixes, settings.payrollAccountPrefixes)
 }
 
 // --- Monthly revenue ---
@@ -119,7 +129,7 @@ export function computeMonthlyRevenue(
 
     const monthExp = currentExpenses.filter((e) => invDate(e).startsWith(monthKey))
     const directCosts = monthExp
-      .filter((e) => classifyByAccountCode(categoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes) === 'cogs')
+      .filter((e) => classifyExpense(extractClientName(e.label), categoryMap.get(e.id), settings) === 'cogs')
       .reduce((s, e) => s + amountHT(e), 0)
 
     const grossMargin = revenue - directCosts
@@ -132,7 +142,7 @@ export function computeMonthlyRevenue(
       .filter((inv) => isBartPucci(clientName(inv), settings.bartPucciNames))
       .reduce((s, inv) => s + amountHT(inv), 0)
     const prevDirectCosts = prevExpenses
-      .filter((e) => invDate(e).startsWith(prevMonthKey) && classifyByAccountCode(categoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes) === 'cogs')
+      .filter((e) => invDate(e).startsWith(prevMonthKey) && classifyExpense(extractClientName(e.label), categoryMap.get(e.id), settings) === 'cogs')
       .reduce((s, e) => s + amountHT(e), 0)
     const prevGrossMargin = prevRevenue - prevDirectCosts
 
@@ -289,18 +299,20 @@ export function computeExpenseSummary(
   const fy = getFiscalYear(now)
   const fyExp = expenses.filter((e) => invDate(e) >= format(fy.start, 'yyyy-MM-dd') && invDate(e) <= format(now, 'yyyy-MM-dd'))
 
-  let totalPayroll = 0, totalDirectCosts = 0, totalExternalCosts = 0
+  let totalPayroll = 0, totalDirectCosts = 0, totalExternalCosts = 0, totalDirectorCharges = 0, totalMeuleryCharges = 0
   for (const e of fyExp) {
-    const cat = classifyByAccountCode(categoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes)
+    const cat = classifyExpense(extractClientName(e.label), categoryMap.get(e.id), settings)
     if (cat === 'payroll') totalPayroll += amountHT(e)
     else if (cat === 'cogs') totalDirectCosts += amountHT(e)
+    else if (cat === 'director') totalDirectorCharges += amountHT(e)
+    else if (cat === 'meulery') totalMeuleryCharges += amountHT(e)
     else totalExternalCosts += amountHT(e)
   }
 
   const monthsElapsed = differenceInMonths(now, fy.start) + 1
   if (settings.payrollMonthly > 0 && totalPayroll === 0) totalPayroll = settings.payrollMonthly * monthsElapsed
 
-  return { totalPayroll, totalDirectCosts, totalExternalCosts, totalExpenses: totalPayroll + totalDirectCosts + totalExternalCosts, monthlyPayroll: [], monthlyDirectCosts: [], monthlyExternalCosts: [] }
+  return { totalPayroll, totalDirectCosts, totalExternalCosts, totalDirectorCharges, totalMeuleryCharges, totalExpenses: totalPayroll + totalDirectCosts + totalExternalCosts + totalDirectorCharges + totalMeuleryCharges, monthlyPayroll: [], monthlyDirectCosts: [], monthlyExternalCosts: [] }
 }
 
 // --- Cash flow ---
@@ -340,7 +352,7 @@ export function computeCashFlow(
     }
 
     const monthExp = currentExpenses.filter((e) => invDate(e).startsWith(monthKey))
-    const classify = (e: PLSupplierInvoice) => classifyByAccountCode(categoryMap.get(e.id), settings.cogsAccountPrefixes, settings.payrollAccountPrefixes)
+    const classify = (e: PLSupplierInvoice) => classifyExpense(extractClientName(e.label), categoryMap.get(e.id), settings)
     const payroll = isHistorical
       ? (monthExp.filter((e) => classify(e) === 'payroll').reduce((s, e) => s + amountHT(e), 0) || settings.payrollMonthly)
       : settings.payrollMonthly
