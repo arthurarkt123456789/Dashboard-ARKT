@@ -165,6 +165,7 @@ function PLTable({ cols }: { cols: Col[] }) {
 export default function PLSection({
   fiscal,
   expenses,
+  monthly,
   prevYearFullExpenses,
   cogsDetail,
   payrollDetail,
@@ -173,6 +174,7 @@ export default function PLSection({
 }: {
   fiscal: FiscalYearSummary
   expenses: ExpenseSummary
+  monthly: import('@/types').MonthlyRevenue[]
   prevYearFullExpenses?: {
     totalPayroll: number
     totalDirectCosts: number
@@ -212,12 +214,16 @@ export default function PLSection({
     resultTheoPct: theoreticalEbitdaPct,
   }
 
-  // N-1 YTD column (same months as YTD N)
-  const prevTotalChargesYtd = (fiscal.prevYearGrossMargin || 0) // not exact, approximation
+  // N-1 YTD column — sum from monthly data (same number of elapsed months as current YTD)
   const prevGmEnc = fiscal.prevYearGrossMargin
-  // We approximate N-1 YTD expenses as proportional to full year (no breakdown available for N-1 YTD)
+  const prevYtdPayroll = monthly.reduce((s, m) => s + m.prevYearPayroll, 0)
+  const prevYtdExternal = monthly.reduce((s, m) => s + m.prevYearExternalCosts, 0)
+  const prevYtdDirector = monthly.reduce((s, m) => s + m.prevYearDirectorCharges, 0)
+  const prevYtdMeulery = monthly.reduce((s, m) => s + m.prevYearMeuleryCharges, 0)
+  const prevYtdResult = prevGmEnc - prevYtdPayroll - prevYtdExternal - prevYtdDirector - prevYtdMeulery
+
   const n1Ytd: Col = {
-    label: `N-1 YTD (${fiscal.year.split('-')[0]})`,
+    label: `N-1 YTD`,
     revenue: fiscal.prevYearRevenue,
     unpaid: 0,
     theoreticalRevenue: fiscal.prevYearRevenue,
@@ -226,14 +232,14 @@ export default function PLSection({
     grossMarginTheo: prevGmEnc,
     grossMarginEncPct: fiscal.prevYearRevenue > 0 ? (prevGmEnc / fiscal.prevYearRevenue) * 100 : 0,
     grossMarginTheoPct: fiscal.prevYearRevenue > 0 ? (prevGmEnc / fiscal.prevYearRevenue) * 100 : 0,
-    payroll: 0,
-    directorCharges: 0,
-    meuleryCharges: 0,
-    externalCosts: 0,
-    resultEnc: prevGmEnc,
-    resultTheo: prevGmEnc,
-    resultEncPct: fiscal.prevYearRevenue > 0 ? (prevGmEnc / fiscal.prevYearRevenue) * 100 : 0,
-    resultTheoPct: fiscal.prevYearRevenue > 0 ? (prevGmEnc / fiscal.prevYearRevenue) * 100 : 0,
+    payroll: prevYtdPayroll,
+    directorCharges: prevYtdDirector,
+    meuleryCharges: prevYtdMeulery,
+    externalCosts: prevYtdExternal,
+    resultEnc: prevYtdResult,
+    resultTheo: prevYtdResult,
+    resultEncPct: fiscal.prevYearRevenue > 0 ? (prevYtdResult / fiscal.prevYearRevenue) * 100 : 0,
+    resultTheoPct: fiscal.prevYearRevenue > 0 ? (prevYtdResult / fiscal.prevYearRevenue) * 100 : 0,
   }
 
   // N-1 Exercice complet column

@@ -153,13 +153,12 @@ export function computeMonthlyRevenue(
     const classifyPrev = (e: PLSupplierInvoice) =>
       classifyExpense(extractClientName(e.label), prevCategoryMap.get(e.id), settings)
 
-    const prevDirectCosts = prevMonthExp
-      .filter((e) => classifyPrev(e) === 'cogs')
-      .reduce((s, e) => s + amountHT(e), 0)
+    const prevDirectCosts = prevMonthExp.filter((e) => classifyPrev(e) === 'cogs').reduce((s, e) => s + amountHT(e), 0)
     const prevGrossMargin = prevRevenue - prevDirectCosts
-    const prevYearPayroll = prevMonthExp
-      .filter((e) => classifyPrev(e) === 'payroll')
-      .reduce((s, e) => s + amountHT(e), 0)
+    const prevYearPayroll = prevMonthExp.filter((e) => classifyPrev(e) === 'payroll').reduce((s, e) => s + amountHT(e), 0)
+    const prevYearExternalCosts = prevMonthExp.filter((e) => classifyPrev(e) === 'external').reduce((s, e) => s + amountHT(e), 0)
+    const prevYearDirectorCharges = prevMonthExp.filter((e) => classifyPrev(e) === 'director').reduce((s, e) => s + amountHT(e), 0)
+    const prevYearMeuleryCharges = prevMonthExp.filter((e) => classifyPrev(e) === 'meulery').reduce((s, e) => s + amountHT(e), 0)
 
     months.push({
       month: monthKey,
@@ -189,6 +188,9 @@ export function computeMonthlyRevenue(
       cumMeuleryCharges: 0,
       cumEbe: 0,
       prevYearPayroll,
+      prevYearExternalCosts,
+      prevYearDirectorCharges,
+      prevYearMeuleryCharges,
       prevYearCumPayroll: 0,
     })
   }

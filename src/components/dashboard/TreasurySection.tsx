@@ -16,10 +16,24 @@ function getCurrentYearMonth(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 }
 
-function addMonth(ym: string, delta: number): string {
+function addMonthStr(ym: string, delta: number): string {
   const [y, m] = ym.split('-').map(Number)
   const d = new Date(y, m - 1 + delta, 1)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+function avg(values: number[]): number {
+  const nonZero = values.filter((v) => v > 0)
+  return nonZero.length > 0 ? nonZero.reduce((s, v) => s + v, 0) / nonZero.length : 0
+}
+
+function Cell({ value, color }: { value: number; color?: string }) {
+  if (value === 0) return <td style={{ textAlign: 'right', padding: '5px 10px', color: 'var(--text-muted)' }}>—</td>
+  return (
+    <td style={{ textAlign: 'right', padding: '5px 10px', color: color ?? 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+      {fmtCur(value)}
+    </td>
+  )
 }
 
 export default function TreasurySection({
@@ -34,211 +48,186 @@ export default function TreasurySection({
   const nowYM = getCurrentYearMonth()
   const today = new Date().getDate()
 
-  // Build columns: last 2 months + current + future until FY end
-  const allMonths = monthly.map((m) => m.month)
-  // Past 2 months (may not be in FY monthly if before start)
-  const past2 = [addMonth(nowYM, -2), addMonth(nowYM, -1)].filter((m) => allMonths.includes(m))
-  const futureMonths = allMonths.filter((m) => m >= nowYM)
+  // Build display columns: past 2 months in FY + current + future
+  const allFYMonths = monthly.map((m) => m.month)
+  const past2 = [addMonthStr(nowYM, -2), addMonthStr(nowYM, -1)].filter((m) => allFYMonths.includes(m))
+  const futureMonths = allFYMonths.filter((m) => m >= nowYM)
   const displayMonths = [...past2, ...futureMonths.filter((m) => !past2.includes(m))]
 
-  // Build pipeline grid lookup
-  const pipelineLookup: { [month: string]: number } = {}
-  for (const entry of pipelineGrid.entries) {
-    pipelineLookup[entry.month] = (pipelineLookup[entry.month] || 0) + entry.amount
+  // Monthly data lookup
+  const ml: Record<string, MonthlyRevenue> = {}
+  for (const m of monthly) ml[m.month] = m
+
+  // Pipeline lookup by month
+  const pipelineLookup: Record<string, number> = {}
+  for (const e of pipelineGrid.entries) {
+    pipelineLookup[e.month] = (pipelineLookup[e.month] ?? 0) + e.amount
   }
 
-  // Build monthly data lookup from `monthly`
-  const monthLookup: { [month: string]: MonthlyRevenue } = {}
-  for (const m of monthly) monthLookup[m.month] = m
+  // Compute averages from past months (non-zero values)
+  const pastMonths = monthly.filter((m) => m.month < nowYM)
+  const avgPayroll = avg(pastMonths.map((m) => m.payroll))
+  const avgExternal = avg(pastMonths.map((m) => m.externalCosts))
+  const avgDirector = avg(pastMonths.map((m) => m.directorCharges))
+  const avgMeulery = avg(pastMonths.map((m) => m.meuleryCharges))
+  const avgRevenue = avg(pastMonths.map((m) => m.revenue))
 
-  // Treasury items
-  const treasuryItems = settings.treasuryItems ?? []
+  // Non-salary treasury items (skip salary items — those come from Pennylane)
+  const fixedItems = (settings.treasuryItems ?? []).filter(
+    (ti) => !ti.name.toLowerCase().includes('salaire') && !ti.name.toLowerCase().includes('salary')
+  )
+  const directorSalaryItem = (settings.treasuryItems ?? []).find(
+    (ti) => ti.name.toLowerCase().includes('dirigeant')
+  )
+  const directorSalaryAmount = directorSalaryItem?.monthlyAmount ?? 0
 
-  // Compute solde evolution
-  let soldeDebut = settings.currentBankBalance
+  // Build month blocks
   type MonthBlock = {
     month: string
     isPast: boolean
     isCurrent: boolean
-    revenue: number
-    collected: number
+    // Entrées
+    caFacture: number
+    caEncaisse: number
     pipeline: number
-    items: number[]
-    autresCharges: number
-    totalIn: number
-    totalOut: number
-    net: number
-    soldeFin: number
+    // Sorties
+    salairesAutres: number  // payroll - dirigeant salary (from Pennylane for past)
+    salaireDirigeant: number
+    fixedItems: number[]
+    externalCosts: number
+    directorCharges: number
+    meuleryCharges: number
+    // Solde
     soldeDebut: number
+    soldeFin: number
   }
 
-  const blocks: MonthBlock[] = []
   let runningBalance = settings.currentBankBalance
+  const blocks: MonthBlock[] = []
 
   for (const m of displayMonths) {
-    const md = monthLookup[m]
+    const md = ml[m]
     const isPast = m < nowYM
     const isCurrent = m === nowYM
 
-    const revenue = md?.revenue ?? 0
-    const collected = md ? (isPast ? md.revenue : revenue) : 0
+    const caFacture = md?.revenue ?? (isPast ? 0 : avgRevenue)
+    const caEncaisse = isPast ? (md?.revenue ?? 0) : 0
     const pipeline = pipelineLookup[m] ?? 0
 
-    const totalIn = isPast ? revenue : collected + pipeline
+    // Payroll from Pennylane for past/current, average for future
+    const totalPayroll = isPast || isCurrent ? (md?.payroll ?? 0) : avgPayroll
+    const salaireDirigeant = directorSalaryAmount
+    const salairesAutres = Math.max(0, totalPayroll - salaireDirigeant)
 
-    // Fixed charges per treasury item
-    const itemAmounts = treasuryItems.map((ti) => ti.monthlyAmount)
-    const totalFixedCharges = itemAmounts.reduce((s, v) => s + v, 0)
+    // Fixed items from settings (emprunt, voiture, loyer, etc.)
+    const itemAmounts = fixedItems.map((ti) => ti.monthlyAmount)
 
-    // "Autres charges" = remaining external costs not covered by fixed items
-    // We use externalCosts from monthly as a proxy
-    const externalCosts = md?.externalCosts ?? 0
-    const directCosts = md?.directCosts ?? 0
-    const autresCharges = Math.max(0, externalCosts + directCosts - totalFixedCharges)
+    // External costs from Pennylane for past, average for future
+    const externalCosts = isPast || isCurrent ? (md?.externalCosts ?? 0) : avgExternal
+    const directorCharges = isPast || isCurrent ? (md?.directorCharges ?? 0) : avgDirector
+    const meuleryCharges = isPast || isCurrent ? (md?.meuleryCharges ?? 0) : avgMeulery
 
-    const totalOut = totalFixedCharges + autresCharges
-    const net = totalIn - totalOut
-    const thisDebut = runningBalance
-    runningBalance += net
+    const totalIn = isPast ? caEncaisse : caFacture + pipeline
+    const totalOut = salairesAutres + salaireDirigeant + itemAmounts.reduce((s, v) => s + v, 0) + externalCosts + directorCharges + meuleryCharges
+
+    const soldeDebut = runningBalance
+    runningBalance += totalIn - totalOut
 
     blocks.push({
-      month: m,
-      isPast,
-      isCurrent,
-      revenue,
-      collected,
-      pipeline,
-      items: itemAmounts,
-      autresCharges,
-      totalIn,
-      totalOut,
-      net,
-      soldeFin: runningBalance,
-      soldeDebut: thisDebut,
+      month: m, isPast, isCurrent,
+      caFacture, caEncaisse, pipeline,
+      salairesAutres, salaireDirigeant,
+      fixedItems: itemAmounts,
+      externalCosts, directorCharges, meuleryCharges,
+      soldeDebut, soldeFin: runningBalance,
     })
   }
 
-  // Summary section
+  // Summary for current / next month
   const currentBlock = blocks.find((b) => b.isCurrent)
-  const nextMonthBlock = blocks.find((b) => b.month === addMonth(nowYM, 1))
+  const nextBlock = blocks.find((b) => b.month === addMonthStr(nowYM, 1))
 
-  // Dépenses à venir ce mois = items where dayOfMonth > today
-  const upcomingThisMonth = treasuryItems
+  const upcomingThisMonth = (settings.treasuryItems ?? [])
     .filter((ti) => ti.dayOfMonth > today && ti.monthlyAmount > 0)
     .reduce((s, ti) => s + ti.monthlyAmount, 0)
 
-  const upcomingNextMonth = treasuryItems
+  const upcomingNextMonthTotal = (settings.treasuryItems ?? [])
     .filter((ti) => ti.monthlyAmount > 0)
     .reduce((s, ti) => s + ti.monthlyAmount, 0)
 
   const soldeDebutProchain = currentBlock?.soldeFin ?? settings.currentBankBalance
-  const soldeFinProchain = (nextMonthBlock?.soldeFin) ?? (soldeDebutProchain + (nextMonthBlock?.net ?? 0))
+
+  const TH = ({ children, accent }: { children: React.ReactNode; accent?: boolean }) => (
+    <th style={{ textAlign: 'right', padding: '8px 10px', borderBottom: '2px solid var(--border)', color: accent ? 'var(--accent)' : 'var(--text-secondary)', fontWeight: 600, whiteSpace: 'nowrap', minWidth: 90 }}>
+      {children}
+    </th>
+  )
+
+  const SectionRow = ({ label, color }: { label: string; color: string }) => (
+    <tr>
+      <td colSpan={displayMonths.length + 1} style={{ padding: '6px 10px', fontWeight: 700, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color, borderBottom: '1px solid var(--border)', background: color === 'var(--green)' ? 'var(--green-dim)' : color === 'var(--red)' ? 'rgba(231,76,60,0.04)' : 'rgba(255,255,255,0.02)' }}>
+        {label}
+      </td>
+    </tr>
+  )
+
+  const DataRow = ({ label, values, color, bold }: { label: string; values: number[]; color?: string; bold?: boolean }) => (
+    <tr style={{ borderBottom: bold ? '2px solid var(--border)' : undefined }}>
+      <td style={{ padding: '5px 10px 5px 20px', color: bold ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: bold ? 700 : 400 }}>{label}</td>
+      {values.map((v, i) => <Cell key={i} value={v} color={color} />)}
+    </tr>
+  )
 
   return (
     <section className="section">
       <h2 className="section-title">Plan de trésorerie</h2>
+      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 16 }}>
+        Salaires & charges externes : données Pennylane pour les mois passés, moyenne des mois passés pour les prévisions.
+        Autres postes (emprunt, voiture, loyer) : configurer dans ⚙ Paramètres.
+      </p>
 
       <div style={{ overflowX: 'auto', marginBottom: 24 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
           <thead>
             <tr>
-              <th style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '2px solid var(--border)', color: 'var(--text-secondary)', fontWeight: 600, whiteSpace: 'nowrap', minWidth: 160 }}>
-                Poste
-              </th>
+              <th style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '2px solid var(--border)', color: 'var(--text-secondary)', fontWeight: 600, minWidth: 180 }}>Poste</th>
               {displayMonths.map((m) => (
-                <th key={m} style={{
-                  textAlign: 'right',
-                  padding: '8px 10px',
-                  borderBottom: '2px solid var(--border)',
-                  color: m === nowYM ? 'var(--accent)' : 'var(--text-secondary)',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                  minWidth: 90,
-                }}>
+                <TH key={m} accent={m === nowYM}>
                   {formatMonthLabel(m)}
-                  {m === nowYM && <span style={{ fontSize: '0.7rem', display: 'block', color: 'var(--accent)' }}>en cours</span>}
-                </th>
+                  {m === nowYM && <span style={{ fontSize: '0.7rem', display: 'block' }}>en cours</span>}
+                  {m > nowYM && <span style={{ fontSize: '0.65rem', display: 'block', color: 'var(--text-muted)' }}>prev.</span>}
+                </TH>
               ))}
             </tr>
           </thead>
           <tbody>
-            {/* ENTRÉES */}
-            <tr>
-              <td colSpan={displayMonths.length + 1} style={{ padding: '6px 10px', fontWeight: 700, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--green)', borderBottom: '1px solid var(--border)', background: 'var(--green-dim, rgba(39,174,96,0.05))' }}>
-                ENTRÉES
-              </td>
-            </tr>
-            <tr>
-              <td style={{ padding: '5px 10px 5px 20px', color: 'var(--text-secondary)' }}>CA facturé</td>
-              {blocks.map((b) => (
-                <td key={b.month} style={{ textAlign: 'right', padding: '5px 10px', color: 'var(--green)', fontVariantNumeric: 'tabular-nums' }}>
-                  {b.revenue > 0 ? fmtCur(b.revenue) : '—'}
-                </td>
-              ))}
-            </tr>
-            <tr>
-              <td style={{ padding: '5px 10px 5px 20px', color: 'var(--text-secondary)' }}>CA encaissé</td>
-              {blocks.map((b) => (
-                <td key={b.month} style={{ textAlign: 'right', padding: '5px 10px', color: 'var(--green)', fontVariantNumeric: 'tabular-nums' }}>
-                  {b.collected > 0 ? fmtCur(b.collected) : '—'}
-                </td>
-              ))}
-            </tr>
-            <tr style={{ borderBottom: '1px solid var(--border)' }}>
-              <td style={{ padding: '5px 10px 5px 20px', color: 'var(--text-secondary)' }}>Pipeline prévu</td>
-              {blocks.map((b) => (
-                <td key={b.month} style={{ textAlign: 'right', padding: '5px 10px', color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>
-                  {b.pipeline > 0 ? fmtCur(b.pipeline) : '—'}
-                </td>
-              ))}
-            </tr>
+            <SectionRow label="ENTRÉES" color="var(--green)" />
+            <DataRow label="CA facturé HT" values={blocks.map((b) => b.caFacture)} color="var(--green)" />
+            <DataRow label="CA encaissé" values={blocks.map((b) => b.caEncaisse)} color="var(--green)" />
+            <DataRow label="Pipeline prévu" values={blocks.map((b) => b.pipeline)} color="var(--accent)" />
 
-            {/* SORTIES */}
-            <tr>
-              <td colSpan={displayMonths.length + 1} style={{ padding: '6px 10px', fontWeight: 700, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--red)', borderBottom: '1px solid var(--border)', background: 'rgba(231,76,60,0.04)' }}>
-                SORTIES
-              </td>
-            </tr>
-            {treasuryItems.map((ti, idx) => (
+            <SectionRow label="SORTIES" color="var(--red)" />
+            <DataRow label="Salaires (hors dirigeant)" values={blocks.map((b) => b.salairesAutres)} color="var(--red)" />
+            <DataRow label="Salaire dirigeant" values={blocks.map((b) => b.salaireDirigeant)} color="var(--red)" />
+            {fixedItems.map((ti, idx) => (
               <tr key={idx}>
                 <td style={{ padding: '5px 10px 5px 20px', color: 'var(--text-secondary)' }}>
                   {ti.name}
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginLeft: 6 }}>j.{ti.dayOfMonth}</span>
+                  {ti.dayOfMonth > 0 && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: 6 }}>j.{ti.dayOfMonth}</span>}
                 </td>
-                {blocks.map((b) => (
-                  <td key={b.month} style={{ textAlign: 'right', padding: '5px 10px', color: ti.monthlyAmount > 0 ? 'var(--red)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-                    {ti.monthlyAmount > 0 ? fmtCur(-ti.monthlyAmount) : '—'}
-                  </td>
-                ))}
+                {blocks.map((b, i) => <Cell key={i} value={b.fixedItems[idx] ?? 0} color="var(--red)" />)}
               </tr>
             ))}
-            <tr style={{ borderBottom: '1px solid var(--border)' }}>
-              <td style={{ padding: '5px 10px 5px 20px', color: 'var(--text-secondary)' }}>Autres charges</td>
-              {blocks.map((b) => (
-                <td key={b.month} style={{ textAlign: 'right', padding: '5px 10px', color: b.autresCharges > 0 ? 'var(--text-secondary)' : 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
-                  {b.autresCharges > 0 ? fmtCur(-b.autresCharges) : '—'}
-                </td>
-              ))}
-            </tr>
+            <DataRow label="Charges dirigeant" values={blocks.map((b) => b.directorCharges)} color="var(--orange)" />
+            <DataRow label="Charges Meuleries" values={blocks.map((b) => b.meuleryCharges)} color="var(--text-secondary)" />
+            <DataRow label="Frais externes" values={blocks.map((b) => b.externalCosts)} color="var(--text-secondary)" />
 
-            {/* SOLDE */}
-            <tr>
-              <td colSpan={displayMonths.length + 1} style={{ padding: '6px 10px', fontWeight: 700, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)', background: 'var(--bg-section, rgba(255,255,255,0.02))' }}>
-                SOLDE
-              </td>
-            </tr>
-            <tr>
-              <td style={{ padding: '5px 10px 5px 20px', color: 'var(--text-secondary)' }}>Solde début de mois</td>
-              {blocks.map((b) => (
-                <td key={b.month} style={{ textAlign: 'right', padding: '5px 10px', fontVariantNumeric: 'tabular-nums', color: b.soldeDebut >= 0 ? 'var(--text-primary)' : 'var(--red)' }}>
-                  {fmtCur(b.soldeDebut)}
-                </td>
-              ))}
-            </tr>
-            <tr style={{ borderTop: '2px solid var(--border)', background: 'var(--bg-section, rgba(255,255,255,0.02))' }}>
+            <SectionRow label="SOLDE" color="var(--text-secondary)" />
+            <DataRow label="Solde début de mois" values={blocks.map((b) => b.soldeDebut)} />
+            <tr style={{ borderTop: '2px solid var(--border)' }}>
               <td style={{ padding: '7px 10px', fontWeight: 700 }}>Solde fin de mois</td>
-              {blocks.map((b) => (
-                <td key={b.month} style={{ textAlign: 'right', padding: '7px 10px', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: b.soldeFin >= 0 ? 'var(--green)' : 'var(--red)' }}>
+              {blocks.map((b, i) => (
+                <td key={i} style={{ textAlign: 'right', padding: '7px 10px', fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: b.soldeFin >= 0 ? 'var(--green)' : 'var(--red)' }}>
                   {fmtCur(b.soldeFin)}
                 </td>
               ))}
@@ -247,21 +236,21 @@ export default function TreasurySection({
         </table>
       </div>
 
-      {/* Summary section */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+      {/* Summary panel */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
         {[
-          { label: 'Solde actuel', value: settings.currentBankBalance, color: settings.currentBankBalance >= 0 ? 'var(--green)' : 'var(--red)' },
-          { label: 'Dépenses à venir ce mois', value: -upcomingThisMonth, color: upcomingThisMonth > 0 ? 'var(--red)' : 'var(--text-muted)', note: `charges non encore débitées (j. > ${today})` },
-          { label: 'Solde début mois prochain', value: soldeDebutProchain, color: soldeDebutProchain >= 0 ? 'var(--text-primary)' : 'var(--red)' },
-          { label: 'Dépenses à venir mois prochain', value: -upcomingNextMonth, color: upcomingNextMonth > 0 ? 'var(--red)' : 'var(--text-muted)' },
-          { label: 'Solde fin mois prochain', value: soldeFinProchain, color: soldeFinProchain >= 0 ? 'var(--green)' : 'var(--red)' },
+          { label: 'Solde actuel', value: settings.currentBankBalance },
+          { label: `Charges à venir ce mois (j.>${today})`, value: -upcomingThisMonth, note: 'charges fixes non encore débitées' },
+          { label: 'Solde début mois prochain', value: soldeDebutProchain },
+          { label: 'Charges à venir mois prochain', value: -upcomingNextMonthTotal },
+          { label: 'Solde fin mois prochain', value: nextBlock?.soldeFin ?? soldeDebutProchain },
         ].map((item, i) => (
           <div key={i} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px' }}>
-            <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>{item.label}</div>
-            <div style={{ fontSize: '1.2rem', fontWeight: 700, color: item.color, fontVariantNumeric: 'tabular-nums' }}>{fmtCur(item.value)}</div>
-            {'note' in item && item.note && (
-              <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', marginTop: 2 }}>{item.note}</div>
-            )}
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>{item.label}</div>
+            <div style={{ fontSize: '1.15rem', fontWeight: 700, color: item.value >= 0 ? (i === 0 ? 'var(--accent)' : 'var(--green)') : 'var(--red)', fontVariantNumeric: 'tabular-nums' }}>
+              {fmtCur(item.value)}
+            </div>
+            {'note' in item && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>{item.note}</div>}
           </div>
         ))}
       </div>

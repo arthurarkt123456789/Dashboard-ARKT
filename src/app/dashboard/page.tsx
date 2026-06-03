@@ -37,9 +37,11 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 function buildFiscalMonths(): string[] {
   const now = new Date()
   const fy = getFiscalYear(now)
+  const currentMonth = format(now, 'yyyy-MM')
   const months: string[] = []
   for (let i = 0; i < 12; i++) {
-    months.push(format(addMonths(fy.start, i), 'yyyy-MM'))
+    const m = format(addMonths(fy.start, i), 'yyyy-MM')
+    if (m >= currentMonth) months.push(m)
   }
   return months
 }
@@ -144,6 +146,7 @@ export default function DashboardPage() {
           <PLSection
             fiscal={data.fiscal}
             expenses={data.expenses}
+            monthly={data.monthly}
             prevYearFullExpenses={data.prevYearFullExpenses}
             cogsDetail={data.cogsDetail}
             payrollDetail={data.payrollDetail}

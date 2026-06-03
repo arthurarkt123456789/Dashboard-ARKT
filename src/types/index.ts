@@ -69,6 +69,9 @@ export interface MonthlyRevenue {
   cumMeuleryCharges: number
   cumEbe: number
   prevYearPayroll: number
+  prevYearExternalCosts: number
+  prevYearDirectorCharges: number
+  prevYearMeuleryCharges: number
   prevYearCumPayroll: number
 }
 
