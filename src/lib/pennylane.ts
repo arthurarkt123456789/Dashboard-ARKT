@@ -102,9 +102,12 @@ export async function fetchLedgerEntries(
   const CONCURRENCY = 10  // Pennylane allows 25 req/5s — 10 parallel is safe
   const result = new Map<number, string | null>()
 
-  // Only complete invoices have ledger lines — skip the rest (saves most API calls)
+  // Fetch for complete + entry invoices (entry = partially accounted, may have 60x debit line)
+  // Skip validation_needed and archived (no accounting done yet)
   const toFetch = invoices.filter(
-    (inv) => inv.accounting_status === 'complete' && getFromCache(`ledger_${inv.id}`) === null
+    (inv) =>
+      (inv.accounting_status === 'complete' || inv.accounting_status === 'entry') &&
+      getFromCache(`ledger_${inv.id}`) === null
   )
 
   for (let i = 0; i < toFetch.length; i += CONCURRENCY) {
