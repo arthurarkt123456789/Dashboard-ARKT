@@ -13,72 +13,75 @@ export async function GET() {
     return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
   }
 
-  const now = new Date()
-  const fy = getFiscalYear(now)
-  const prev = getPrevFiscalYear(now)
+  try {
+    const now = new Date()
+    const fy = getFiscalYear(now)
+    const prev = getPrevFiscalYear(now)
 
-  const fyStart = format(fy.start, 'yyyy-MM-dd')
-  const fyNow = format(now, 'yyyy-MM-dd')
-  const prevStart = format(prev.start, 'yyyy-MM-dd')
-  const prevEnd = format(prev.end, 'yyyy-MM-dd')
+    const fyStart = format(fy.start, 'yyyy-MM-dd')
+    const fyNow = format(now, 'yyyy-MM-dd')
+    const prevStart = format(prev.start, 'yyyy-MM-dd')
+    const prevEnd = format(prev.end, 'yyyy-MM-dd')
 
-  const [allInvoices, settings, rawPipeline] = await Promise.all([
-    getAllCustomerInvoices(),
-    getSettings(),
-    prisma.pipelineEntry.findMany({ orderBy: { expectedDate: 'asc' } }),
-  ])
+    const [allInvoices, settings, rawPipeline] = await Promise.all([
+      getAllCustomerInvoices(),
+      getSettings().catch(() => ({ payrollMonthly: 0, currentBankBalance: 0, bartPucciNames: [], cogsAccountPrefixes: ['60','607','611','621'], payrollAccountPrefixes: ['641','645'] })),
+      prisma.pipelineEntry.findMany({ orderBy: { expectedDate: 'asc' } }).catch(() => []),
+    ])
 
-  const currentInvoices = allInvoices.filter((inv) => inv.date >= fyStart && inv.date <= fyNow)
-  const prevInvoices = allInvoices.filter((inv) => inv.date >= prevStart && inv.date <= prevEnd)
+    const currentInvoices = allInvoices.filter((inv) => inv.date >= fyStart && inv.date <= fyNow)
+    const prevInvoices = allInvoices.filter((inv) => inv.date >= prevStart && inv.date <= prevEnd)
 
-  const [currentSums, prevSums] = await Promise.all([
-    getExpenseAccountSums(fyStart, fyNow),
-    getExpenseAccountSums(prevStart, prevEnd),
-  ])
+    // Fetch expense account sums — these are the slow calls, run in parallel
+    const [currentSums, prevSums] = await Promise.all([
+      getExpenseAccountSums(fyStart, fyNow).catch(() => new Map<string, Map<string, number>>()),
+      getExpenseAccountSums(prevStart, prevEnd).catch(() => new Map<string, Map<string, number>>()),
+    ])
 
-  // P&L computations
-  const currentPnL = computePnL(currentInvoices, currentSums, 0, fyStart, fyNow)
-  const prevPnL = computePnL(prevInvoices, prevSums, 0, prevStart, prevEnd)
-  const prevFullPnL = computePnL(prevInvoices, prevSums, 0, prevStart, prevEnd)
+    const currentPnL = computePnL(currentInvoices, currentSums, 0, fyStart, fyNow)
+    const prevPnL = computePnL(prevInvoices, prevSums, 0, prevStart, prevEnd)
+    const prevFullPnL = computePnL(prevInvoices, prevSums, 0, prevStart, prevEnd)
 
-  // Monthly for chart (current FY only)
-  const monthly = computeMonthly(allInvoices, currentSums, new Map(), fy.start)
-  const prevMonthly = computeMonthly(allInvoices, prevSums, new Map(), prev.start)
+    const monthly = computeMonthly(allInvoices, currentSums, new Map(), fy.start)
+    const prevMonthly = computeMonthly(allInvoices, prevSums, new Map(), prev.start)
 
-  // Pipeline
-  const pipeline = rawPipeline.map((p) => ({
-    id: p.id,
-    clientName: p.clientName,
-    description: p.description,
-    amount: p.amount,
-    expectedDate: p.expectedDate ? p.expectedDate.toISOString().slice(0, 10) : null,
-    isRecurring: p.isRecurring,
-    frequency: p.frequency,
-    createdAt: p.createdAt.toISOString(),
-    updatedAt: p.updatedAt.toISOString(),
-  }))
+    const pipeline = rawPipeline.map((p) => ({
+      id: p.id,
+      clientName: p.clientName,
+      description: p.description,
+      amount: p.amount,
+      expectedDate: p.expectedDate ? p.expectedDate.toISOString().slice(0, 10) : null,
+      isRecurring: p.isRecurring,
+      frequency: p.frequency,
+      createdAt: p.createdAt.toISOString(),
+      updatedAt: p.updatedAt.toISOString(),
+    }))
 
-  // Run-rate
-  const pipelineTotal = pipeline
-    .filter((p) => !p.expectedDate || new Date(p.expectedDate) >= now)
-    .reduce((s, p) => s + p.amount, 0)
+    const pipelineTotal = pipeline
+      .filter((p) => !p.expectedDate || new Date(p.expectedDate) >= now)
+      .reduce((s, p) => s + p.amount, 0)
 
-  const runRate = {
-    ytd: currentPnL.revenue,
-    unpaid: currentPnL.invoicedUnpaid,
-    pipeline: pipelineTotal,
-    total: currentPnL.revenue + currentPnL.invoicedUnpaid + pipelineTotal,
-    prevFullRevenue: prevFullPnL.revenue,
+    return NextResponse.json({
+      current: currentPnL,
+      prevYtd: prevPnL,
+      prevFull: prevFullPnL,
+      monthly,
+      prevMonthly,
+      runRate: {
+        ytd: currentPnL.revenue,
+        unpaid: currentPnL.invoicedUnpaid,
+        pipeline: pipelineTotal,
+        total: currentPnL.revenue + currentPnL.invoicedUnpaid + pipelineTotal,
+        prevFullRevenue: prevFullPnL.revenue,
+      },
+      pipeline,
+      settings,
+    })
+  } catch (err) {
+    console.error('[dashboard] Error:', err)
+    return NextResponse.json(
+      { error: String(err), stack: err instanceof Error ? err.stack : undefined },
+      { status: 500 }
+    )
   }
-
-  return NextResponse.json({
-    current: currentPnL,
-    prevYtd: prevPnL,
-    prevFull: prevFullPnL,
-    monthly,
-    prevMonthly,
-    runRate,
-    pipeline,
-    settings,
-  })
 }
