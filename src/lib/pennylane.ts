@@ -223,7 +223,7 @@ export async function fetchPayrollFromLedger(
 
     cursor = !hitPastRange && res.has_more && res.next_cursor ? res.next_cursor : undefined
     pages++
-    if (pages > 15) break
+    if (pages > 50) break  // 5000 entries = ~3-4 years of history, enough for any date range
   } while (cursor)
 
   // Fetch ledger lines for each payroll entry (batched)
