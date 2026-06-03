@@ -84,10 +84,10 @@ export async function GET() {
     updatedAt: p.updatedAt.toISOString(),
   }))
 
-  // Fetch ledger entries — 20s timeout to prevent infinite loading
+  // Fetch ledger entries for both current AND prev year expenses (needed for correct N-1 margin)
   const categoryMap = await Promise.race([
-    fetchLedgerEntries(currentExpenses),
-    new Promise<Map<number, string | null>>((r) => setTimeout(() => r(new Map()), 20000)),
+    fetchLedgerEntries([...currentExpenses, ...prevExpenses]),
+    new Promise<Map<number, string | null>>((r) => setTimeout(() => r(new Map()), 25000)),
   ]).catch(() => new Map())
 
   const monthly = computeMonthlyRevenue(currentInvoices, prevInvoices, currentExpenses, prevExpenses, settings, now, categoryMap)

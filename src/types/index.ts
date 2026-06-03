@@ -178,7 +178,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   payrollMonthly: 0,
   currentBankBalance: 0,
   bartPucciNames: ['bart', 'pucci', 'bart & pucci', 'bart&pucci'],
-  cogsAccountPrefixes: ['60', '611', '621'],
+  cogsAccountPrefixes: ['60', '601', '604', '607', '611', '612', '621'],
   payrollAccountPrefixes: ['641', '642', '644', '645', '646', '647', '648'],
   directorChargeSuppliers: ['dmevent', 'enolane', 'amazon'],
   meuleryChargeSuppliers: ['carrelages lupi', 'little sea'],
