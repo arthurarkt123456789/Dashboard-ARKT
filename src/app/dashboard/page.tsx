@@ -229,6 +229,18 @@ function SettingsPanel({
   }
 
   const coveragePct = coverage.total > 0 ? Math.round((coverage.categorized / coverage.total) * 100) : 0
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshResult, setRefreshResult] = useState('')
+
+  const forceRefreshCache = async () => {
+    setRefreshing(true)
+    setRefreshResult('')
+    const r = await fetch('/api/admin/refresh-cache', { method: 'POST' })
+    const data = await r.json()
+    setRefreshResult(`${data.newly_fetched} nouvelles écritures chargées, ${data.errors} erreurs`)
+    setRefreshing(false)
+    onSave()
+  }
 
   if (!open) {
     return (
@@ -251,6 +263,12 @@ function SettingsPanel({
         {coveragePct === 100
           ? `✓ 100% des factures fournisseurs catégorisées via Pennylane (codes comptables).`
           : `⚠ ${coveragePct}% des factures catégorisées (${coverage.categorized}/${coverage.total}). Les ${coverage.total - coverage.categorized} non catégorisées sont comptées en frais externes.`}
+        <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="btn btn-ghost" onClick={forceRefreshCache} disabled={refreshing} style={{ fontSize: '0.78rem' }}>
+            {refreshing ? '↻ Chargement...' : '↻ Forcer le recalcul des codes comptables'}
+          </button>
+          {refreshResult && <span style={{ fontSize: '0.75rem', color: 'var(--green)' }}>{refreshResult}</span>}
+        </div>
       </div>
 
       <div className="settings-grid">
