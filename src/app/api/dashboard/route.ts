@@ -17,7 +17,7 @@ import {
   getPrevFiscalYear,
 } from '@/lib/calculations'
 import { format, addMonths } from 'date-fns'
-import { PipelineEntry, PLCustomerInvoice, PLSupplierInvoice, DEFAULT_SETTINGS } from '@/types'
+import { PipelineEntry, PLCustomerInvoice, PLSupplierInvoice, DEFAULT_SETTINGS, extractClientName } from '@/types'
 
 export async function GET() {
   if (!(await isAuthenticated())) {
@@ -102,6 +102,11 @@ export async function GET() {
   runRate.variance = runRate.total - prevYearTotal
   runRate.variancePct = prevYearTotal > 0 ? ((runRate.total - prevYearTotal) / prevYearTotal) * 100 : 0
 
+  // Unique supplier names for settings categorization UI
+  const allSuppliers = Array.from(new Set(
+    currentExpenses.map((e) => extractClientName(e.label)).filter(Boolean)
+  )).sort()
+
   return NextResponse.json({
     monthly,
     fiscal,
@@ -112,6 +117,7 @@ export async function GET() {
     unpaidInvoices,
     pipeline,
     settings,
+    allSuppliers,
     pennylaneError,
   })
 }

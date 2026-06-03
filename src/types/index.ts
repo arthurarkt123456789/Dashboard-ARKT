@@ -22,9 +22,8 @@ export interface PLSupplierInvoice {
   deadline: string
   currency_amount_before_tax: string
   currency_amount: string
-  paid: boolean
+  payment_status: string   // "to_be_paid" | "paid" | "scheduled" | ...
   remaining_amount_without_tax: string
-  status: string
   supplier?: { id: number; url: string }
 }
 
@@ -153,6 +152,7 @@ export interface DashboardData {
   unpaidInvoices: PLCustomerInvoice[]
   pipeline: PipelineEntry[]
   settings: AppSettings
+  allSuppliers: string[]
   pennylaneError?: string | null
 }
 
@@ -160,14 +160,14 @@ export interface AppSettings {
   payrollMonthly: number
   currentBankBalance: number
   bartPucciNames: string[]
-  directCostKeywords: string[]
-  payrollKeywords: string[]
+  cogsSuppliers: string[]      // fournisseurs = charges directes (COGS)
+  payrollSuppliers: string[]   // fournisseurs = masse salariale
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   payrollMonthly: 0,
   currentBankBalance: 0,
   bartPucciNames: ['bart', 'pucci', 'bart & pucci', 'bart&pucci'],
-  directCostKeywords: ['sous-traitance', 'prestation', 'achat refact', 'mission'],
-  payrollKeywords: ['salaire', 'paie', 'fiche de paie', 'bulletin', 'rémunération'],
+  cogsSuppliers: [],
+  payrollSuppliers: [],
 }

@@ -108,42 +108,59 @@ export default function DashboardPage() {
 
           <CashFlowSection cashFlow={data.cashFlow} />
 
-          <SettingsPanel settings={data.settings} onSave={load} />
+          <SettingsPanel settings={data.settings} allSuppliers={data.allSuppliers} onSave={load} />
         </>
       )}
     </div>
   )
 }
 
-// Inline settings panel
+type SupplierCategory = 'external' | 'cogs' | 'payroll'
+
+const CATEGORY_LABELS: Record<SupplierCategory, string> = {
+  external: 'Frais externes',
+  cogs: '📦 Charges directes (COGS)',
+  payroll: '👤 Masse salariale',
+}
+
 function SettingsPanel({
   settings,
+  allSuppliers,
   onSave,
 }: {
   settings: DashboardData['settings']
+  allSuppliers: string[]
   onSave: () => void
 }) {
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({
-    payrollMonthly: String(settings.payrollMonthly),
-    currentBankBalance: String(settings.currentBankBalance),
-    bartPucciNames: settings.bartPucciNames.join(', '),
-    directCostKeywords: settings.directCostKeywords.join(', '),
-    payrollKeywords: settings.payrollKeywords.join(', '),
+  const [payrollMonthly, setPayrollMonthly] = useState(String(settings.payrollMonthly))
+  const [currentBankBalance, setCurrentBankBalance] = useState(String(settings.currentBankBalance))
+  const [bartPucciNames, setBartPucciNames] = useState(settings.bartPucciNames.join(', '))
+  const [supplierMap, setSupplierMap] = useState<Record<string, SupplierCategory>>(() => {
+    const map: Record<string, SupplierCategory> = {}
+    for (const s of settings.cogsSuppliers) map[s] = 'cogs'
+    for (const s of settings.payrollSuppliers) map[s] = 'payroll'
+    return map
   })
   const [saving, setSaving] = useState(false)
 
+  const setCategory = (supplier: string, cat: SupplierCategory) => {
+    setSupplierMap((prev) => ({ ...prev, [supplier]: cat }))
+  }
+
   const handleSave = async () => {
     setSaving(true)
+    const cogsSuppliers = Object.entries(supplierMap).filter(([, v]) => v === 'cogs').map(([k]) => k)
+    const payrollSuppliers = Object.entries(supplierMap).filter(([, v]) => v === 'payroll').map(([k]) => k)
     await fetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        payrollMonthly: form.payrollMonthly,
-        currentBankBalance: form.currentBankBalance,
-        bartPucciNames: JSON.stringify(form.bartPucciNames.split(',').map((v: string) => v.trim()).filter(Boolean)),
-        directCostKeywords: JSON.stringify(form.directCostKeywords.split(',').map((v: string) => v.trim()).filter(Boolean)),
-        payrollKeywords: JSON.stringify(form.payrollKeywords.split(',').map((v: string) => v.trim()).filter(Boolean)),
+        payrollMonthly,
+        currentBankBalance,
+        bartPucciNames: JSON.stringify(bartPucciNames.split(',').map((v: string) => v.trim()).filter(Boolean)),
+        cogsSuppliers: JSON.stringify(cogsSuppliers),
+        payrollSuppliers: JSON.stringify(payrollSuppliers),
       }),
     })
     setSaving(false)
@@ -167,59 +184,71 @@ function SettingsPanel({
         <h2 className="section-title">⚙ Paramètres</h2>
         <button className="btn btn-ghost" onClick={() => setOpen(false)}>Fermer</button>
       </div>
-      <div className="settings-grid">
+
+      <div className="settings-grid" style={{ marginBottom: 24 }}>
         <div className="form-group">
           <label>Masse salariale mensuelle (€ HT)</label>
-          <input
-            className="form-input"
-            type="number"
-            value={form.payrollMonthly}
-            onChange={(e) => setForm({ ...form, payrollMonthly: e.target.value })}
-            placeholder="Ex: 8000"
-          />
-          <span style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>
-            Si non détectable automatiquement via Pennylane
-          </span>
+          <input className="form-input" type="number" value={payrollMonthly}
+            onChange={(e) => setPayrollMonthly(e.target.value)} placeholder="Ex: 8000" />
+          <span style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>Utilisé si non détecté via Pennylane</span>
         </div>
         <div className="form-group">
           <label>Solde bancaire actuel (€)</label>
-          <input
-            className="form-input"
-            type="number"
-            value={form.currentBankBalance}
-            onChange={(e) => setForm({ ...form, currentBankBalance: e.target.value })}
-            placeholder="Ex: 45000"
-          />
+          <input className="form-input" type="number" value={currentBankBalance}
+            onChange={(e) => setCurrentBankBalance(e.target.value)} placeholder="Ex: 45000" />
         </div>
         <div className="form-group">
-          <label>Noms Bart & Pucci (séparés par virgule)</label>
-          <input
-            className="form-input"
-            value={form.bartPucciNames}
-            onChange={(e) => setForm({ ...form, bartPucciNames: e.target.value })}
-            placeholder="bart, pucci, bart & pucci"
-          />
-        </div>
-        <div className="form-group">
-          <label>Mots-clés charges directes</label>
-          <input
-            className="form-input"
-            value={form.directCostKeywords}
-            onChange={(e) => setForm({ ...form, directCostKeywords: e.target.value })}
-            placeholder="sous-traitance, prestation..."
-          />
-        </div>
-        <div className="form-group">
-          <label>Mots-clés masse salariale</label>
-          <input
-            className="form-input"
-            value={form.payrollKeywords}
-            onChange={(e) => setForm({ ...form, payrollKeywords: e.target.value })}
-            placeholder="salaire, paie, bulletin..."
-          />
+          <label>Noms Bart &amp; Pucci (séparés par virgule)</label>
+          <input className="form-input" value={bartPucciNames}
+            onChange={(e) => setBartPucciNames(e.target.value)} placeholder="bart, pucci" />
         </div>
       </div>
-      <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+
+      <h3 className="section-subtitle" style={{ marginBottom: 12 }}>
+        Catégorisation des fournisseurs
+      </h3>
+      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 16 }}>
+        Classez chaque fournisseur pour calculer la marge brute. Par défaut = Frais externes.
+      </p>
+
+      {allSuppliers.length === 0 ? (
+        <p className="empty-state">Aucun fournisseur détecté dans Pennylane.</p>
+      ) : (
+        <div className="table-wrapper">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Fournisseur</th>
+                <th>Catégorie</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allSuppliers.map((supplier) => {
+                const cat: SupplierCategory = supplierMap[supplier] ?? 'external'
+                return (
+                  <tr key={supplier}>
+                    <td style={{ fontWeight: 600 }}>{supplier}</td>
+                    <td>
+                      <select
+                        className="form-input"
+                        style={{ width: 'auto' }}
+                        value={cat}
+                        onChange={(e) => setCategory(supplier, e.target.value as SupplierCategory)}
+                      >
+                        {(Object.entries(CATEGORY_LABELS) as [SupplierCategory, string][]).map(([v, l]) => (
+                          <option key={v} value={v}>{l}</option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ marginTop: 20, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
         <button className="btn btn-ghost" onClick={() => setOpen(false)}>Annuler</button>
         <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? 'Enregistrement...' : 'Enregistrer'}

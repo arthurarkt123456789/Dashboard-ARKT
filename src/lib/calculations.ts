@@ -30,7 +30,9 @@ function amountHT(inv: PLCustomerInvoice | PLSupplierInvoice): number {
 }
 
 function isPaid(inv: PLCustomerInvoice | PLSupplierInvoice): boolean {
-  return inv.paid === true
+  if ('paid' in inv) return inv.paid === true
+  if ('payment_status' in inv) return (inv as PLSupplierInvoice).payment_status === 'paid'
+  return false
 }
 
 function remainingHT(inv: PLCustomerInvoice): number {
@@ -45,9 +47,6 @@ function clientName(inv: PLCustomerInvoice): string {
   return extractClientName(inv.label)
 }
 
-function supplierLabel(inv: PLSupplierInvoice): string {
-  return inv.label ?? ''
-}
 
 // --- Fiscal year helpers ---
 
@@ -79,14 +78,14 @@ function isBartPucci(name: string, names: string[]): boolean {
   return names.some((n) => lower.includes(n.toLowerCase()))
 }
 
-function isDirectCost(label: string, keywords: string[]): boolean {
-  const text = label.toLowerCase()
-  return keywords.some((k) => text.includes(k.toLowerCase()))
+function isDirectCost(supplierName: string, cogsSuppliers: string[]): boolean {
+  const lower = supplierName.toLowerCase()
+  return cogsSuppliers.some((s) => lower === s.toLowerCase() || lower.includes(s.toLowerCase()))
 }
 
-function isPayroll(label: string, keywords: string[]): boolean {
-  const text = label.toLowerCase()
-  return keywords.some((k) => text.includes(k.toLowerCase()))
+function isPayroll(supplierName: string, payrollSuppliers: string[]): boolean {
+  const lower = supplierName.toLowerCase()
+  return payrollSuppliers.some((s) => lower === s.toLowerCase() || lower.includes(s.toLowerCase()))
 }
 
 // --- Monthly revenue ---
@@ -114,7 +113,7 @@ export function computeMonthlyRevenue(
 
     const monthExp = currentExpenses.filter((e) => invDate(e).startsWith(monthKey))
     const directCosts = monthExp
-      .filter((e) => isDirectCost(supplierLabel(e), settings.directCostKeywords))
+      .filter((e) => isDirectCost(extractClientName(e.label), settings.cogsSuppliers))
       .reduce((s, e) => s + amountHT(e), 0)
 
     const grossMargin = revenue - directCosts
@@ -127,7 +126,7 @@ export function computeMonthlyRevenue(
       .filter((inv) => isBartPucci(clientName(inv), settings.bartPucciNames))
       .reduce((s, inv) => s + amountHT(inv), 0)
     const prevDirectCosts = prevExpenses
-      .filter((e) => invDate(e).startsWith(prevMonthKey) && isDirectCost(supplierLabel(e), settings.directCostKeywords))
+      .filter((e) => invDate(e).startsWith(prevMonthKey) && isDirectCost(extractClientName(e.label), settings.cogsSuppliers))
       .reduce((s, e) => s + amountHT(e), 0)
     const prevGrossMargin = prevRevenue - prevDirectCosts
 
@@ -281,9 +280,9 @@ export function computeExpenseSummary(expenses: PLSupplierInvoice[], settings: A
 
   let totalPayroll = 0, totalDirectCosts = 0, totalExternalCosts = 0
   for (const e of fyExp) {
-    const lbl = supplierLabel(e)
-    if (isPayroll(lbl, settings.payrollKeywords)) totalPayroll += amountHT(e)
-    else if (isDirectCost(lbl, settings.directCostKeywords)) totalDirectCosts += amountHT(e)
+    const lbl = extractClientName(e.label)
+    if (isPayroll(lbl, settings.payrollSuppliers)) totalPayroll += amountHT(e)
+    else if (isDirectCost(lbl, settings.cogsSuppliers)) totalDirectCosts += amountHT(e)
     else totalExternalCosts += amountHT(e)
   }
 
@@ -330,11 +329,11 @@ export function computeCashFlow(
 
     const monthExp = currentExpenses.filter((e) => invDate(e).startsWith(monthKey))
     const payroll = isHistorical
-      ? (monthExp.filter((e) => isPayroll(supplierLabel(e), settings.payrollKeywords)).reduce((s, e) => s + amountHT(e), 0) || settings.payrollMonthly)
+      ? (monthExp.filter((e) => isPayroll(extractClientName(e.label), settings.payrollSuppliers)).reduce((s, e) => s + amountHT(e), 0) || settings.payrollMonthly)
       : settings.payrollMonthly
-    const directCosts = monthExp.filter((e) => isDirectCost(supplierLabel(e), settings.directCostKeywords)).reduce((s, e) => s + amountHT(e), 0)
+    const directCosts = monthExp.filter((e) => isDirectCost(extractClientName(e.label), settings.cogsSuppliers)).reduce((s, e) => s + amountHT(e), 0)
     const externalCosts = monthExp
-      .filter((e) => !isPayroll(supplierLabel(e), settings.payrollKeywords) && !isDirectCost(supplierLabel(e), settings.directCostKeywords))
+      .filter((e) => !isPayroll(extractClientName(e.label), settings.payrollSuppliers) && !isDirectCost(extractClientName(e.label), settings.cogsSuppliers))
       .reduce((s, e) => s + amountHT(e), 0)
 
     const totalOut = payroll + directCosts + externalCosts
