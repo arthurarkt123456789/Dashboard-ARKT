@@ -151,6 +151,79 @@ export async function fetchSupplierInvoices(fromDate: string, toDate: string): P
   return all.filter((inv) => inv.date >= fromDate && inv.date <= toDate)
 }
 
+// Fetch payroll amounts from ledger entries (OD journal, labels contain salary keywords)
+// Returns monthly map YYYY-MM → total gross payroll (641 + 645 debit)
+export async function fetchPayrollFromLedger(
+  fromDate: string,
+  toDate: string
+): Promise<{ monthly: Map<string, number>; total: number }> {
+  const SALARY_KEYWORDS = ['salaire', 'appointement', 'paie', 'charges sociales', 'salaires']
+  const payrollEntries: { id: number; date: string }[] = []
+
+  let cursor: string | undefined
+  let pages = 0
+  do {
+    const params: Record<string, string> = { sort: '-date', limit: '100' }
+    if (cursor) params.cursor = cursor
+    const res = await plFetch<{
+      items: { id: number; date: string; label: string; status: string }[]
+      has_more: boolean
+      next_cursor?: string
+    }>('/ledger_entries', params)
+
+    let hitPastRange = false
+    for (const entry of res.items ?? []) {
+      if (entry.date > toDate) continue
+      if (entry.date < fromDate) { hitPastRange = true; break }
+      if (entry.status !== 'complete') continue
+      const lower = (entry.label ?? '').toLowerCase()
+      if (SALARY_KEYWORDS.some((k) => lower.includes(k))) {
+        payrollEntries.push({ id: entry.id, date: entry.date })
+      }
+    }
+
+    cursor = !hitPastRange && res.has_more && res.next_cursor ? res.next_cursor : undefined
+    pages++
+    if (pages > 15) break
+  } while (cursor)
+
+  // Fetch ledger lines for each payroll entry (batched)
+  const monthly = new Map<string, number>()
+  let total = 0
+  const CONCURRENCY = 8
+
+  for (let i = 0; i < payrollEntries.length; i += CONCURRENCY) {
+    const batch = payrollEntries.slice(i, i + CONCURRENCY)
+    const results = await Promise.allSettled(
+      batch.map((e) =>
+        fetchLedgerEntry(e.id).then((entry) => ({
+          date: e.date,
+          amount: (entry.ledger_entry_lines ?? [])
+            .filter(
+              (l) =>
+                parseFloat(l.debit) > 0 &&
+                (l.ledger_account.number.startsWith('641') ||
+                  l.ledger_account.number.startsWith('642') ||
+                  l.ledger_account.number.startsWith('644') ||
+                  l.ledger_account.number.startsWith('645') ||
+                  l.ledger_account.number.startsWith('646'))
+            )
+            .reduce((s, l) => s + parseFloat(l.debit), 0),
+        }))
+      )
+    )
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value.amount > 0) {
+        const monthKey = r.value.date.slice(0, 7)
+        monthly.set(monthKey, (monthly.get(monthKey) ?? 0) + r.value.amount)
+        total += r.value.amount
+      }
+    }
+  }
+
+  return { monthly, total }
+}
+
 export function clearCache() {
   cache.clear()
 }

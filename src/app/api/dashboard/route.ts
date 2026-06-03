@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import { isAuthenticated } from '@/lib/auth'
-import { fetchCustomerInvoices, fetchSupplierInvoices, fetchLedgerEntries } from '@/lib/pennylane'
+import { fetchCustomerInvoices, fetchSupplierInvoices, fetchLedgerEntries, fetchPayrollFromLedger } from '@/lib/pennylane'
 import { getSettings } from '@/lib/settings'
 import { prisma } from '@/lib/prisma'
 import {
@@ -84,8 +84,11 @@ export async function GET() {
     updatedAt: p.updatedAt.toISOString(),
   }))
 
-  // Fetch ledger entries — complete invoices only, 30s timeout
-  const categoryMap = await fetchLedgerEntries(currentExpenses).catch(() => new Map())
+  // Fetch ledger entries — 20s timeout to prevent infinite loading
+  const categoryMap = await Promise.race([
+    fetchLedgerEntries(currentExpenses),
+    new Promise<Map<number, string | null>>((r) => setTimeout(() => r(new Map()), 20000)),
+  ]).catch(() => new Map())
 
   const monthly = computeMonthlyRevenue(currentInvoices, prevInvoices, currentExpenses, prevExpenses, settings, now, categoryMap)
   const invoicedUnpaid = currentInvoices
@@ -93,7 +96,17 @@ export async function GET() {
     .reduce((s, inv) => s + (parseFloat(inv.remaining_amount_without_tax) || 0), 0)
   const fiscal = computeFiscalSummary(monthly, now, invoicedUnpaid)
   const runRate = computeRunRate(currentInvoices, pipeline, settings, now)
-  const expenses = computeExpenseSummary(currentExpenses, settings, now, categoryMap)
+  // Fetch payroll from ledger entries (OD journal) — 15s timeout
+  const fyStart = format(getFiscalYear(now).start, 'yyyy-MM-dd')
+  const fyNow = format(now, 'yyyy-MM-dd')
+  const payrollLedger = await Promise.race([
+    fetchPayrollFromLedger(fyStart, fyNow),
+    new Promise<{ monthly: Map<string, number>; total: number }>((r) =>
+      setTimeout(() => r({ monthly: new Map(), total: 0 }), 15000)
+    ),
+  ]).catch(() => ({ monthly: new Map<string, number>(), total: 0 }))
+
+  const expenses = computeExpenseSummary(currentExpenses, settings, now, categoryMap, payrollLedger)
   const cashFlow = computeCashFlow(currentInvoices, currentExpenses, pipeline, settings, now, categoryMap)
   const health = computeHealthStatus(fiscal, runRate, cashFlow)
 
@@ -116,8 +129,6 @@ export async function GET() {
   }
 
   // Detail lines for COGS and payroll — for verification in the UI
-  const fyStart = format(getFiscalYear(now).start, 'yyyy-MM-dd')
-  const fyNow = format(now, 'yyyy-MM-dd')
   const fyExpenses = currentExpenses.filter((e) => e.date >= fyStart && e.date <= fyNow)
 
   const classify = (e: PLSupplierInvoice) => classifyExpense(extractClientName(e.label), categoryMap.get(e.id), settings)

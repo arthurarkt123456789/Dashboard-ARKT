@@ -294,23 +294,29 @@ export function computeExpenseSummary(
   expenses: PLSupplierInvoice[],
   settings: AppSettings,
   now: Date,
-  categoryMap: Map<number, string | null> = new Map()
+  categoryMap: Map<number, string | null> = new Map(),
+  payrollLedger: { monthly: Map<string, number>; total: number } = { monthly: new Map(), total: 0 }
 ): ExpenseSummary {
   const fy = getFiscalYear(now)
   const fyExp = expenses.filter((e) => invDate(e) >= format(fy.start, 'yyyy-MM-dd') && invDate(e) <= format(now, 'yyyy-MM-dd'))
 
-  let totalPayroll = 0, totalDirectCosts = 0, totalExternalCosts = 0, totalDirectorCharges = 0, totalMeuleryCharges = 0
+  let totalPayrollFromInvoices = 0, totalDirectCosts = 0, totalExternalCosts = 0, totalDirectorCharges = 0, totalMeuleryCharges = 0
   for (const e of fyExp) {
     const cat = classifyExpense(extractClientName(e.label), categoryMap.get(e.id), settings)
-    if (cat === 'payroll') totalPayroll += amountHT(e)
+    if (cat === 'payroll') totalPayrollFromInvoices += amountHT(e)
     else if (cat === 'cogs') totalDirectCosts += amountHT(e)
     else if (cat === 'director') totalDirectorCharges += amountHT(e)
     else if (cat === 'meulery') totalMeuleryCharges += amountHT(e)
     else totalExternalCosts += amountHT(e)
   }
 
+  // Payroll priority: ledger entries (OD journal) > supplier invoices > manual setting
   const monthsElapsed = differenceInMonths(now, fy.start) + 1
-  if (settings.payrollMonthly > 0 && totalPayroll === 0) totalPayroll = settings.payrollMonthly * monthsElapsed
+  let totalPayroll = payrollLedger.total > 0
+    ? payrollLedger.total
+    : totalPayrollFromInvoices > 0
+    ? totalPayrollFromInvoices
+    : settings.payrollMonthly * monthsElapsed
 
   return { totalPayroll, totalDirectCosts, totalExternalCosts, totalDirectorCharges, totalMeuleryCharges, totalExpenses: totalPayroll + totalDirectCosts + totalExternalCosts + totalDirectorCharges + totalMeuleryCharges, monthlyPayroll: [], monthlyDirectCosts: [], monthlyExternalCosts: [] }
 }
