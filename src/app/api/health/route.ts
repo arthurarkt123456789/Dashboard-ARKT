@@ -8,11 +8,7 @@ export async function GET() {
 
   const headers = { Authorization: `Bearer ${apiKey}` }
 
-  // Fetch first 50 supplier invoices and check their accounting_status
-  const res = await fetch(
-    'https://app.pennylane.com/api/external/v2/supplier_invoices?limit=50',
-    { headers }
-  )
+  const res = await fetch('https://app.pennylane.com/api/external/v2/supplier_invoices?limit=50', { headers })
   const data = await res.json()
   const items = data?.items ?? []
 
@@ -21,22 +17,21 @@ export async function GET() {
     statusCounts[inv.accounting_status] = (statusCounts[inv.accounting_status] ?? 0) + 1
   }
 
-  // Find first validated invoice and fetch its categories
-  const validated = items.find((inv: { accounting_status: string }) => inv.accounting_status !== 'validation_needed')
-  let validatedCats = null
-  if (validated) {
+  // Find first COMPLETE invoice (fully accounted)
+  const complete = items.find((inv: { accounting_status: string }) => inv.accounting_status === 'complete')
+  let completeCats = null
+  if (complete) {
     const r = await fetch(
-      `https://app.pennylane.com/api/external/v2/supplier_invoices/${validated.id}/categories`,
+      `https://app.pennylane.com/api/external/v2/supplier_invoices/${complete.id}/categories`,
       { headers }
     )
-    validatedCats = await r.json()
+    completeCats = await r.json()
   }
 
   return NextResponse.json({
     ok: true,
-    total_fetched: items.length,
     accounting_status_breakdown: statusCounts,
-    first_validated_invoice: validated ? { id: validated.id, label: validated.label, accounting_status: validated.accounting_status } : null,
-    first_validated_categories: validatedCats,
+    complete_invoice: complete ? { id: complete.id, label: complete.label } : null,
+    complete_categories: completeCats,
   })
 }
