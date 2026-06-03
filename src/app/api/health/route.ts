@@ -6,16 +6,29 @@ export async function GET() {
   const apiKey = process.env.PENNYLANE_API_KEY
   if (!apiKey) return NextResponse.json({ ok: true })
 
-  const res = await fetch(
-    'https://app.pennylane.com/api/external/v2/supplier_invoices?limit=3',
-    { headers: { Authorization: `Bearer ${apiKey}` } }
+  const headers = { Authorization: `Bearer ${apiKey}` }
+
+  // Test 1: supplier invoices with include[]=categories
+  const r1 = await fetch(
+    'https://app.pennylane.com/api/external/v2/supplier_invoices?limit=1&include[]=categories',
+    { headers }
   )
-  const data = await res.json()
-  const sample = data?.items?.[0]
+  const d1 = await r1.json()
+
+  // Test 2: categories of first invoice
+  const firstId = d1?.items?.[0]?.id
+  let cats = null
+  if (firstId) {
+    const r2 = await fetch(
+      `https://app.pennylane.com/api/external/v2/supplier_invoices/${firstId}/categories`,
+      { headers }
+    )
+    cats = await r2.json()
+  }
 
   return NextResponse.json({
     ok: true,
-    supplier_keys: sample ? Object.keys(sample) : [],
-    supplier_sample: sample ?? null,
+    include_test: d1?.items?.[0]?.categories,
+    categories_endpoint: cats,
   })
 }
