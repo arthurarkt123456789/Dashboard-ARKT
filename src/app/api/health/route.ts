@@ -8,27 +8,35 @@ export async function GET() {
 
   const headers = { Authorization: `Bearer ${apiKey}` }
 
-  // Test 1: supplier invoices with include[]=categories
-  const r1 = await fetch(
-    'https://app.pennylane.com/api/external/v2/supplier_invoices?limit=1&include[]=categories',
+  // Fetch first 50 supplier invoices and check their accounting_status
+  const res = await fetch(
+    'https://app.pennylane.com/api/external/v2/supplier_invoices?limit=50',
     { headers }
   )
-  const d1 = await r1.json()
+  const data = await res.json()
+  const items = data?.items ?? []
 
-  // Test 2: categories of first invoice
-  const firstId = d1?.items?.[0]?.id
-  let cats = null
-  if (firstId) {
-    const r2 = await fetch(
-      `https://app.pennylane.com/api/external/v2/supplier_invoices/${firstId}/categories`,
+  const statusCounts: Record<string, number> = {}
+  for (const inv of items) {
+    statusCounts[inv.accounting_status] = (statusCounts[inv.accounting_status] ?? 0) + 1
+  }
+
+  // Find first validated invoice and fetch its categories
+  const validated = items.find((inv: { accounting_status: string }) => inv.accounting_status !== 'validation_needed')
+  let validatedCats = null
+  if (validated) {
+    const r = await fetch(
+      `https://app.pennylane.com/api/external/v2/supplier_invoices/${validated.id}/categories`,
       { headers }
     )
-    cats = await r2.json()
+    validatedCats = await r.json()
   }
 
   return NextResponse.json({
     ok: true,
-    include_test: d1?.items?.[0]?.categories,
-    categories_endpoint: cats,
+    total_fetched: items.length,
+    accounting_status_breakdown: statusCounts,
+    first_validated_invoice: validated ? { id: validated.id, label: validated.label, accounting_status: validated.accounting_status } : null,
+    first_validated_categories: validatedCats,
   })
 }
