@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextResponse } from 'next/server'
 import { isAuthenticated } from '@/lib/auth'
-import { fetchCustomerInvoices, fetchSupplierInvoices } from '@/lib/pennylane'
+import { fetchCustomerInvoices, fetchSupplierInvoices, fetchAllSupplierCategories } from '@/lib/pennylane'
 import { getSettings } from '@/lib/settings'
 import { prisma } from '@/lib/prisma'
 import {
@@ -83,14 +83,18 @@ export async function GET() {
     updatedAt: p.updatedAt.toISOString(),
   }))
 
-  const monthly = computeMonthlyRevenue(currentInvoices, prevInvoices, currentExpenses, prevExpenses, settings, now)
+  // Fetch Pennylane accounting categories for all supplier invoices
+  const allExpenses = [...currentExpenses, ...prevExpenses]
+  const categoryMap = await fetchAllSupplierCategories(allExpenses).catch(() => new Map())
+
+  const monthly = computeMonthlyRevenue(currentInvoices, prevInvoices, currentExpenses, prevExpenses, settings, now, categoryMap)
   const invoicedUnpaid = currentInvoices
     .filter((inv) => !inv.paid && parseFloat(inv.remaining_amount_without_tax) > 0)
     .reduce((s, inv) => s + (parseFloat(inv.remaining_amount_without_tax) || 0), 0)
   const fiscal = computeFiscalSummary(monthly, now, invoicedUnpaid)
   const runRate = computeRunRate(currentInvoices, pipeline, settings, now)
-  const expenses = computeExpenseSummary(currentExpenses, settings, now)
-  const cashFlow = computeCashFlow(currentInvoices, currentExpenses, pipeline, settings, now)
+  const expenses = computeExpenseSummary(currentExpenses, settings, now, categoryMap)
+  const cashFlow = computeCashFlow(currentInvoices, currentExpenses, pipeline, settings, now, categoryMap)
   const health = computeHealthStatus(fiscal, runRate, cashFlow)
 
   const unpaidInvoices = currentInvoices
@@ -102,10 +106,17 @@ export async function GET() {
   runRate.variance = runRate.total - prevYearTotal
   runRate.variancePct = prevYearTotal > 0 ? ((runRate.total - prevYearTotal) / prevYearTotal) * 100 : 0
 
-  // Unique supplier names for settings categorization UI
-  const allSuppliers = Array.from(new Set(
-    currentExpenses.map((e) => extractClientName(e.label)).filter(Boolean)
-  )).sort()
+  // Coverage stats: how many invoices have Pennylane accounting categories
+  const ht = (e: PLSupplierInvoice) => parseFloat(e.currency_amount_before_tax) || 0
+  const categorized = currentExpenses.filter((e) => (categoryMap.get(e.id) ?? []).length > 0).length
+  const expenseCoverage = {
+    total: currentExpenses.length,
+    categorized,
+    totalAmount: currentExpenses.reduce((s, e) => s + ht(e), 0),
+    categorizedAmount: currentExpenses
+      .filter((e) => (categoryMap.get(e.id) ?? []).length > 0)
+      .reduce((s, e) => s + ht(e), 0),
+  }
 
   return NextResponse.json({
     monthly,
@@ -117,7 +128,7 @@ export async function GET() {
     unpaidInvoices,
     pipeline,
     settings,
-    allSuppliers,
+    expenseCoverage,
     pennylaneError,
   })
 }

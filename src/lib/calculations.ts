@@ -1,3 +1,4 @@
+import { PLInvoiceCategory } from '@/lib/pennylane'
 import {
   PLCustomerInvoice,
   PLSupplierInvoice,
@@ -78,14 +79,22 @@ function isBartPucci(name: string, names: string[]): boolean {
   return names.some((n) => lower.includes(n.toLowerCase()))
 }
 
-function isDirectCost(supplierName: string, cogsSuppliers: string[]): boolean {
-  const lower = supplierName.toLowerCase()
-  return cogsSuppliers.some((s) => lower === s.toLowerCase() || lower.includes(s.toLowerCase()))
-}
+export type CostCategory = 'cogs' | 'payroll' | 'external'
 
-function isPayroll(supplierName: string, payrollSuppliers: string[]): boolean {
-  const lower = supplierName.toLowerCase()
-  return payrollSuppliers.some((s) => lower === s.toLowerCase() || lower.includes(s.toLowerCase()))
+export function classifyByAccountCode(
+  cats: PLInvoiceCategory[],
+  cogsPrefixes: string[],
+  payrollPrefixes: string[]
+): CostCategory {
+  if (cats.length === 0) return 'external'
+  // Use the category with the highest amount to determine classification
+  const primary = cats.reduce((a, b) =>
+    parseFloat(b.amount) > parseFloat(a.amount) ? b : a
+  )
+  const code = primary.plan_item?.number ?? ''
+  if (payrollPrefixes.some((p) => code.startsWith(p))) return 'payroll'
+  if (cogsPrefixes.some((p) => code.startsWith(p))) return 'cogs'
+  return 'external'
 }
 
 // --- Monthly revenue ---
@@ -96,7 +105,8 @@ export function computeMonthlyRevenue(
   currentExpenses: PLSupplierInvoice[],
   prevExpenses: PLSupplierInvoice[],
   settings: AppSettings,
-  now: Date
+  now: Date,
+  categoryMap: Map<number, PLInvoiceCategory[]> = new Map()
 ): MonthlyRevenue[] {
   const fy = getFiscalYear(now)
   const months: MonthlyRevenue[] = []
@@ -113,7 +123,7 @@ export function computeMonthlyRevenue(
 
     const monthExp = currentExpenses.filter((e) => invDate(e).startsWith(monthKey))
     const directCosts = monthExp
-      .filter((e) => isDirectCost(extractClientName(e.label), settings.cogsSuppliers))
+      .filter((e) => classifyByAccountCode(categoryMap.get(e.id) ?? [], settings.cogsAccountPrefixes, settings.payrollAccountPrefixes) === 'cogs')
       .reduce((s, e) => s + amountHT(e), 0)
 
     const grossMargin = revenue - directCosts
@@ -126,7 +136,7 @@ export function computeMonthlyRevenue(
       .filter((inv) => isBartPucci(clientName(inv), settings.bartPucciNames))
       .reduce((s, inv) => s + amountHT(inv), 0)
     const prevDirectCosts = prevExpenses
-      .filter((e) => invDate(e).startsWith(prevMonthKey) && isDirectCost(extractClientName(e.label), settings.cogsSuppliers))
+      .filter((e) => invDate(e).startsWith(prevMonthKey) && classifyByAccountCode(categoryMap.get(e.id) ?? [], settings.cogsAccountPrefixes, settings.payrollAccountPrefixes) === 'cogs')
       .reduce((s, e) => s + amountHT(e), 0)
     const prevGrossMargin = prevRevenue - prevDirectCosts
 
@@ -274,15 +284,20 @@ export function detectDuplicates(
 
 // --- Expense summary ---
 
-export function computeExpenseSummary(expenses: PLSupplierInvoice[], settings: AppSettings, now: Date): ExpenseSummary {
+export function computeExpenseSummary(
+  expenses: PLSupplierInvoice[],
+  settings: AppSettings,
+  now: Date,
+  categoryMap: Map<number, PLInvoiceCategory[]> = new Map()
+): ExpenseSummary {
   const fy = getFiscalYear(now)
   const fyExp = expenses.filter((e) => invDate(e) >= format(fy.start, 'yyyy-MM-dd') && invDate(e) <= format(now, 'yyyy-MM-dd'))
 
   let totalPayroll = 0, totalDirectCosts = 0, totalExternalCosts = 0
   for (const e of fyExp) {
-    const lbl = extractClientName(e.label)
-    if (isPayroll(lbl, settings.payrollSuppliers)) totalPayroll += amountHT(e)
-    else if (isDirectCost(lbl, settings.cogsSuppliers)) totalDirectCosts += amountHT(e)
+    const cat = classifyByAccountCode(categoryMap.get(e.id) ?? [], settings.cogsAccountPrefixes, settings.payrollAccountPrefixes)
+    if (cat === 'payroll') totalPayroll += amountHT(e)
+    else if (cat === 'cogs') totalDirectCosts += amountHT(e)
     else totalExternalCosts += amountHT(e)
   }
 
@@ -299,7 +314,8 @@ export function computeCashFlow(
   currentExpenses: PLSupplierInvoice[],
   pipeline: PipelineEntry[],
   settings: AppSettings,
-  now: Date
+  now: Date,
+  categoryMap: Map<number, PLInvoiceCategory[]> = new Map()
 ): CashFlowMonth[] {
   const fy = getFiscalYear(now)
   const months: CashFlowMonth[] = []
@@ -328,13 +344,12 @@ export function computeCashFlow(
     }
 
     const monthExp = currentExpenses.filter((e) => invDate(e).startsWith(monthKey))
+    const classify = (e: PLSupplierInvoice) => classifyByAccountCode(categoryMap.get(e.id) ?? [], settings.cogsAccountPrefixes, settings.payrollAccountPrefixes)
     const payroll = isHistorical
-      ? (monthExp.filter((e) => isPayroll(extractClientName(e.label), settings.payrollSuppliers)).reduce((s, e) => s + amountHT(e), 0) || settings.payrollMonthly)
+      ? (monthExp.filter((e) => classify(e) === 'payroll').reduce((s, e) => s + amountHT(e), 0) || settings.payrollMonthly)
       : settings.payrollMonthly
-    const directCosts = monthExp.filter((e) => isDirectCost(extractClientName(e.label), settings.cogsSuppliers)).reduce((s, e) => s + amountHT(e), 0)
-    const externalCosts = monthExp
-      .filter((e) => !isPayroll(extractClientName(e.label), settings.payrollSuppliers) && !isDirectCost(extractClientName(e.label), settings.cogsSuppliers))
-      .reduce((s, e) => s + amountHT(e), 0)
+    const directCosts = monthExp.filter((e) => classify(e) === 'cogs').reduce((s, e) => s + amountHT(e), 0)
+    const externalCosts = monthExp.filter((e) => classify(e) === 'external').reduce((s, e) => s + amountHT(e), 0)
 
     const totalOut = payroll + directCosts + externalCosts
     const netFlow = (isHistorical ? revenue : collected) - totalOut

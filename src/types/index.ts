@@ -152,7 +152,7 @@ export interface DashboardData {
   unpaidInvoices: PLCustomerInvoice[]
   pipeline: PipelineEntry[]
   settings: AppSettings
-  allSuppliers: string[]
+  expenseCoverage: { categorized: number; total: number; totalAmount: number; categorizedAmount: number }
   pennylaneError?: string | null
 }
 
@@ -160,14 +160,15 @@ export interface AppSettings {
   payrollMonthly: number
   currentBankBalance: number
   bartPucciNames: string[]
-  cogsSuppliers: string[]      // fournisseurs = charges directes (COGS)
-  payrollSuppliers: string[]   // fournisseurs = masse salariale
+  // Account code prefixes used to classify supplier invoices
+  cogsAccountPrefixes: string[]     // default: 60x, 611, 621
+  payrollAccountPrefixes: string[]  // default: 641, 642, 644, 645, 646, 647, 648
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   payrollMonthly: 0,
   currentBankBalance: 0,
   bartPucciNames: ['bart', 'pucci', 'bart & pucci', 'bart&pucci'],
-  cogsSuppliers: [],
-  payrollSuppliers: [],
+  cogsAccountPrefixes: ['60', '611', '621'],
+  payrollAccountPrefixes: ['641', '642', '644', '645', '646', '647', '648'],
 }
